@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
 import { defaultMenuData } from '../data/menuData';
+import { supabase } from '../lib/supabaseClient';
 
 const MenuContext = createContext(undefined);
 
@@ -39,26 +40,55 @@ export function MenuProvider({ children }) {
   // ── Estado de ver más expandido (mutuamente excluyente) ──────────────
   const [expandedItemId, setExpandedItemId] = useState(null);
 
-  // ── Cargar datos de localStorage después del montaje (solo cliente) ──
+  // ── Cargar datos de Supabase después del montaje (solo cliente) ──
   useEffect(() => {
-    try {
-      const storedMenu = localStorage.getItem(STORAGE_KEY_MENU);
-      if (storedMenu) {
-        const parsed = JSON.parse(storedMenu);
-        // Validar si es la nueva estructura (array) y si los items tienen la propiedad extras
-        if (Array.isArray(parsed) && parsed[0]?.items?.[0]?.extras !== undefined) {
-          setMenuCategories(parsed);
-        } else {
-          // Si era la vieja, la ignoramos y sobreescribimos usando defaultMenuData
-          console.warn('Estructura de menú vieja detectada. Reseteando a la versión con categorías dinámicas y adicionales.');
-          setMenuCategories(defaultMenuData);
-        }
-      }
-    } catch {
-      // Error leyendo
-    }
-    setMenuLoaded(true);
+    const loadFromSupabase = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('app_state')
+          .select('*')
+          .eq('id', 'tronos')
+          .single();
 
+        if (error) {
+          console.error('Error fetching from Supabase:', error);
+          throw error;
+        }
+
+        if (data) {
+          // Parse menu data
+          if (data.menu_data) {
+            let parsedMenu = data.menu_data;
+            if (typeof parsedMenu === 'string') parsedMenu = JSON.parse(parsedMenu);
+            
+            if (Array.isArray(parsedMenu) && parsedMenu[0]?.items?.[0]?.extras !== undefined) {
+              setMenuCategories(parsedMenu);
+            } else {
+              setMenuCategories(defaultMenuData);
+            }
+          }
+
+          // Parse config data
+          if (data.config_data) {
+            let parsedConfig = data.config_data;
+            if (typeof parsedConfig === 'string') parsedConfig = JSON.parse(parsedConfig);
+            if (parsedConfig.whatsapp) {
+              setRestaurantConfig(parsedConfig);
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Error in loadFromSupabase:', err);
+        // Fallback to defaults
+        setMenuCategories(defaultMenuData);
+      } finally {
+        setMenuLoaded(true);
+      }
+    };
+
+    loadFromSupabase();
+
+    // Load auth from localStorage since it's user-specific and shouldn't be in the DB
     try {
       const storedAuth = localStorage.getItem(STORAGE_KEY_AUTH);
       if (storedAuth === 'true') {
@@ -67,35 +97,38 @@ export function MenuProvider({ children }) {
     } catch {
       // Ignorar errores
     }
-
-    try {
-      const storedConfig = localStorage.getItem(STORAGE_KEY_CONFIG);
-      if (storedConfig) {
-        setRestaurantConfig(JSON.parse(storedConfig));
-      }
-    } catch {
-      // Ignorar
-    }
   }, []);
 
-  // ── Sincronizar menú con localStorage ────────────────────────────────
+  // ── Sincronizar menú con Supabase ────────────────────────────────
   useEffect(() => {
     if (!menuLoaded) return;
-    try {
-      localStorage.setItem(STORAGE_KEY_MENU, JSON.stringify(menuCategories));
-    } catch {
-      // Ignorar errores
-    }
+    const saveMenu = async () => {
+      try {
+        await supabase
+          .from('app_state')
+          .update({ menu_data: menuCategories })
+          .eq('id', 'tronos');
+      } catch (error) {
+        console.error('Error saving menu to Supabase:', error);
+      }
+    };
+    saveMenu();
   }, [menuCategories, menuLoaded]);
 
-  // ── Sincronizar config con localStorage ────────────────────────────────
+  // ── Sincronizar config con Supabase ────────────────────────────────
   useEffect(() => {
     if (!menuLoaded) return;
-    try {
-      localStorage.setItem(STORAGE_KEY_CONFIG, JSON.stringify(restaurantConfig));
-    } catch {
-      // Ignorar errores
-    }
+    const saveConfig = async () => {
+      try {
+        await supabase
+          .from('app_state')
+          .update({ config_data: restaurantConfig })
+          .eq('id', 'tronos');
+      } catch (error) {
+        console.error('Error saving config to Supabase:', error);
+      }
+    };
+    saveConfig();
   }, [restaurantConfig, menuLoaded]);
 
   // ── Sincronizar autenticación con localStorage ───────────────────────
