@@ -149,6 +149,19 @@ export default function Cart() {
                         </div>
                       )}
 
+                      {/* Lista de Ingredientes Removidos */}
+                      {item.removedIngredients && item.removedIngredients.length > 0 && (
+                        <div style={{ ...styles.selectedExtrasContainer, background: 'rgba(255, 68, 68, 0.05)' }}>
+                          {item.removedIngredients.map((ing, idx) => (
+                            <div key={idx} style={styles.selectedExtraItem}>
+                              <span style={{ flex: 1, fontSize: '0.75rem', color: '#ff6b6b', textDecoration: 'line-through' }}>
+                                Sin {ing}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
                       {/* Botón Ver Adicionales */}
                       {item.extras && item.extras.length > 0 && (
                         <button

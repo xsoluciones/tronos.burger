@@ -145,22 +145,27 @@ export function MenuProvider({ children }) {
   }, [isAdmin]);
 
   // ── Funciones del carrito ────────────────────────────────────────────
-  const addToCart = useCallback((item) => {
+  const addToCart = useCallback((item, selectedExtras = [], removedIngredients = []) => {
     setCart((prev) => {
-      // Agrupamos por id del plato
-      const existing = prev.find((cartItem) => cartItem.id === item.id);
+      // Agrupamos por id del plato y por la misma configuración de extras/ingredientes
+      const existing = prev.find((cartItem) => 
+        cartItem.id === item.id &&
+        JSON.stringify(cartItem.selectedExtras) === JSON.stringify(selectedExtras) &&
+        JSON.stringify(cartItem.removedIngredients) === JSON.stringify(removedIngredients)
+      );
       if (existing) {
         return prev.map((cartItem) =>
-          cartItem.id === item.id
+          cartItem.cartItemId === existing.cartItemId
             ? { ...cartItem, quantity: cartItem.quantity + 1 }
             : cartItem
         );
       }
       return [...prev, { 
         ...item, 
-        cartItemId: `${item.id}-${Date.now()}`, 
+        cartItemId: `${item.id}-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`, 
         quantity: 1, 
-        selectedExtras: [] // Array of { id, name, price, quantity }
+        selectedExtras: selectedExtras, // Array of { id, name, price, quantity }
+        removedIngredients: removedIngredients // Array of strings
       }];
     });
   }, []);

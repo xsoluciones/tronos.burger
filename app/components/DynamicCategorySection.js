@@ -9,8 +9,86 @@ import { animate, stagger } from 'animejs';
 export default function DynamicCategorySection({ category }) {
   const { addToCart, expandedItemId, setExpandedItemId } = useMenu();
   const [expandedExtrasId, setExpandedExtrasId] = useState(null);
+  
+  // Estado para guardar las personalizaciones de cada item antes de agregarlo al carrito.
+  // Forma: { [itemId]: { selectedExtras: { extraId: { ...extra, quantity } }, removedIngredients: ['Ingrediente'] } }
+  const [customizations, setCustomizations] = useState({});
+
   const sectionRef = useRef(null);
   const hasAnimated = useRef(false);
+
+  const handleAddExtra = (itemId, extra) => {
+    setCustomizations(prev => {
+      const itemCust = prev[itemId] || { selectedExtras: {}, removedIngredients: [] };
+      const currentQty = itemCust.selectedExtras[extra.id]?.quantity || 0;
+      return {
+        ...prev,
+        [itemId]: {
+          ...itemCust,
+          selectedExtras: {
+            ...itemCust.selectedExtras,
+            [extra.id]: { ...extra, quantity: currentQty + 1 }
+          }
+        }
+      };
+    });
+  };
+
+  const handleRemoveExtra = (itemId, extraId) => {
+    setCustomizations(prev => {
+      const itemCust = prev[itemId];
+      if (!itemCust || !itemCust.selectedExtras[extraId]) return prev;
+      
+      const currentQty = itemCust.selectedExtras[extraId].quantity;
+      const newExtras = { ...itemCust.selectedExtras };
+      if (currentQty > 1) {
+        newExtras[extraId] = { ...newExtras[extraId], quantity: currentQty - 1 };
+      } else {
+        delete newExtras[extraId];
+      }
+      
+      return {
+        ...prev,
+        [itemId]: {
+          ...itemCust,
+          selectedExtras: newExtras
+        }
+      };
+    });
+  };
+
+  const handleToggleIngredient = (itemId, ingredient) => {
+    setCustomizations(prev => {
+      const itemCust = prev[itemId] || { selectedExtras: {}, removedIngredients: [] };
+      const isRemoved = itemCust.removedIngredients.includes(ingredient);
+      
+      return {
+        ...prev,
+        [itemId]: {
+          ...itemCust,
+          removedIngredients: isRemoved 
+            ? itemCust.removedIngredients.filter(i => i !== ingredient)
+            : [...itemCust.removedIngredients, ingredient]
+        }
+      };
+    });
+  };
+
+  const handleAddToCart = (e, item) => {
+    const itemCust = customizations[item.id] || { selectedExtras: {}, removedIngredients: [] };
+    const extrasArray = Object.values(itemCust.selectedExtras);
+    addToCart(item, extrasArray, itemCust.removedIngredients);
+    
+    // Resetear la personalización tras agregarlo para que vuelva al estado inicial
+    setCustomizations(prev => ({
+      ...prev,
+      [item.id]: { selectedExtras: {}, removedIngredients: [] }
+    }));
+
+    window.dispatchEvent(new CustomEvent('product-added-to-cart', {
+      detail: { x: e.clientX, y: e.clientY }
+    }));
+  };
 
   useEffect(() => {
     if (!sectionRef.current) return;
@@ -58,7 +136,7 @@ export default function DynamicCategorySection({ category }) {
           <h2 style={styles.title}>{category.title.toUpperCase()}</h2>
           <div style={styles.underline} />
           <p style={{ color: '#ffffff', fontSize: '1.15rem', fontStyle: 'italic', fontWeight: '500', marginTop: '-10px', marginBottom: '40px' }}>
-            Toca el texto que dice "Adicionales ▼" en cada plato para ver más delicias ✨
+            Toca el texto que dice "Personalizar ▼" en cada plato para añadir extras o quitar ingredientes ✨
           </p>
         </div>
 
@@ -91,12 +169,7 @@ export default function DynamicCategorySection({ category }) {
                     />
                     <button
                       style={styles.floatingCartBtn}
-                      onClick={(e) => {
-                        addToCart(item);
-                        window.dispatchEvent(new CustomEvent('product-added-to-cart', {
-                          detail: { x: e.clientX, y: e.clientY }
-                        }));
-                      }}
+                      onClick={(e) => handleAddToCart(e, item)}
                       onMouseEnter={(e) => {
                         Object.assign(e.currentTarget.style, styles.floatingCartBtnHover);
                       }}
@@ -144,7 +217,7 @@ export default function DynamicCategorySection({ category }) {
                           </button>
                         )}
 
-                        {item.extras && item.extras.length > 0 && (
+                        {(item.extras?.length > 0 || item.removableIngredients?.length > 0) && (
                           <button
                             onClick={() => {
                               setExpandedExtrasId(expandedExtrasId === item.id ? null : item.id);
@@ -163,10 +236,10 @@ export default function DynamicCategorySection({ category }) {
                               gap: '4px',
                             }}
                           >
-                            {expandedExtrasId === item.id ? 'Ocultar adicionales ▲' : (
+                            {expandedExtrasId === item.id ? 'Ocultar Opciones ▲' : (
                               <>
                                 <span className="pointing-hand">👉</span>
-                                Adicionales ▼
+                                Personalizar ▼
                               </>
                             )}
                           </button>
@@ -193,11 +266,11 @@ export default function DynamicCategorySection({ category }) {
                         </div>
                       )}
 
-                      {/* Adicionales List */}
-                      {item.extras && item.extras.length > 0 && (
+                      {/* Personalización (Adicionales e Ingredientes) */}
+                      {(item.extras?.length > 0 || item.removableIngredients?.length > 0) && (
                         <div
                           style={{
-                            maxHeight: expandedExtrasId === item.id ? '300px' : '0px',
+                            maxHeight: expandedExtrasId === item.id ? '500px' : '0px',
                             opacity: expandedExtrasId === item.id ? 1 : 0,
                             overflow: 'hidden',
                             overflowY: 'auto',
@@ -207,20 +280,67 @@ export default function DynamicCategorySection({ category }) {
                             paddingTop: expandedExtrasId === item.id ? '8px' : '0px',
                             display: 'flex',
                             flexDirection: 'column',
-                            gap: '8px'
+                            gap: '12px'
                           }}
                         >
-                          {item.extras.map(extra => (
-                            <div key={extra.id} style={{ display: 'flex', alignItems: 'center', gap: '14px', background: 'rgba(255,255,255,0.03)', padding: '10px', borderRadius: '12px', border: '1px solid rgba(212, 168, 67, 0.1)' }}>
-                              {extra.image && (
-                                <img src={extra.image} alt={extra.name} style={{ width: '75px', height: '75px', borderRadius: '8px', objectFit: 'cover', boxShadow: '0 4px 10px rgba(0,0,0,0.5)' }} />
-                              )}
-                              <div style={{ flex: 1, minWidth: 0 }}>
-                                <p style={{ margin: '0 0 4px 0', fontSize: '0.9rem', color: '#eee', fontWeight: '700' }}>{extra.name}</p>
-                                <p style={{ margin: 0, fontSize: '0.85rem', color: '#d4a843', fontWeight: '600' }}>+ {formatPrice(extra.price)}</p>
+                          {/* Sección Adicionales */}
+                          {item.extras && item.extras.length > 0 && (
+                            <div>
+                              <p style={{ margin: '0 0 8px 0', fontSize: '0.9rem', color: '#d4a843', fontWeight: '700' }}>Añadir Adicionales</p>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                {item.extras.map(extra => {
+                                  const qty = customizations[item.id]?.selectedExtras[extra.id]?.quantity || 0;
+                                  return (
+                                    <div key={extra.id} style={{ display: 'flex', alignItems: 'center', gap: '14px', background: 'rgba(255,255,255,0.03)', padding: '10px', borderRadius: '12px', border: '1px solid rgba(212, 168, 67, 0.1)' }}>
+                                      {extra.image && (
+                                        <img src={extra.image} alt={extra.name} style={{ width: '60px', height: '60px', borderRadius: '8px', objectFit: 'cover', boxShadow: '0 4px 10px rgba(0,0,0,0.5)' }} />
+                                      )}
+                                      <div style={{ flex: 1, minWidth: 0 }}>
+                                        <p style={{ margin: '0 0 4px 0', fontSize: '0.85rem', color: '#eee', fontWeight: '700' }}>{extra.name}</p>
+                                        <p style={{ margin: 0, fontSize: '0.8rem', color: '#d4a843', fontWeight: '600' }}>+ {formatPrice(extra.price)}</p>
+                                      </div>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                        {qty > 0 && (
+                                          <button 
+                                            onClick={() => handleRemoveExtra(item.id, extra.id)}
+                                            style={{ background: 'transparent', border: '1px solid #d4a843', color: '#d4a843', borderRadius: '50%', width: '28px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', padding: 0 }}
+                                          >-</button>
+                                        )}
+                                        {qty > 0 && <span style={{ color: '#fff', fontSize: '0.9rem', fontWeight: '600', minWidth: '16px', textAlign: 'center' }}>{qty}</span>}
+                                        <button 
+                                          onClick={() => handleAddExtra(item.id, extra)}
+                                          style={{ background: '#d4a843', border: 'none', color: '#000', borderRadius: '50%', width: '28px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', padding: 0, fontWeight: 'bold' }}
+                                        >+</button>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
                               </div>
                             </div>
-                          ))}
+                          )}
+
+                          {/* Sección Quitar Ingredientes */}
+                          {item.removableIngredients && item.removableIngredients.length > 0 && (
+                            <div>
+                              <p style={{ margin: '0 0 8px 0', fontSize: '0.9rem', color: '#d4a843', fontWeight: '700' }}>Quitar Ingredientes</p>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                {item.removableIngredients.map((ingredient, idx) => {
+                                  const isRemoved = customizations[item.id]?.removedIngredients?.includes(ingredient);
+                                  return (
+                                    <label key={idx} style={{ display: 'flex', alignItems: 'center', gap: '8px', color: isRemoved ? '#888' : '#eee', fontSize: '0.85rem', cursor: 'pointer' }}>
+                                      <input 
+                                        type="checkbox" 
+                                        checked={!isRemoved}
+                                        onChange={() => handleToggleIngredient(item.id, ingredient)}
+                                        style={{ accentColor: '#d4a843', width: '16px', height: '16px', cursor: 'pointer' }}
+                                      />
+                                      <span style={{ textDecoration: isRemoved ? 'line-through' : 'none' }}>{ingredient}</span>
+                                    </label>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>

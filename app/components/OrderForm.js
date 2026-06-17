@@ -51,8 +51,11 @@ export default function OrderForm({ onClose }) {
              extraLines.push(`  + ${extra.name} x${extra.quantity} = ${formatPrice(extra.price * extra.quantity)}`);
           });
         }
+        if (item.removedIngredients && item.removedIngredients.length > 0) {
+          extraLines.push(`  🚫 Sin ingredientes: ${item.removedIngredients.join(', ')}`);
+        }
         if (item.note && item.note.trim()) {
-          extraLines.push(`  🚫 Sin: ${item.note.trim()}`);
+          extraLines.push(`  🚫 Notas: ${item.note.trim()}`);
         }
         return [itemLine, ...extraLines];
       }),
@@ -200,10 +203,17 @@ export default function OrderForm({ onClose }) {
                           </span>
                         </div>
                       ))}
+                      {item.removedIngredients && item.removedIngredients.length > 0 && (
+                        <div style={{ paddingLeft: '12px', marginTop: '4px' }}>
+                          <span style={{ ...styles.summaryName, fontSize: '0.75rem', color: '#ff6b6b', fontStyle: 'italic' }}>
+                            🚫 Sin ingredientes: {item.removedIngredients.join(', ')}
+                          </span>
+                        </div>
+                      )}
                       {item.note && item.note.trim() && (
                         <div style={{ paddingLeft: '12px', marginTop: '4px' }}>
                           <span style={{ ...styles.summaryName, fontSize: '0.75rem', color: '#ff6b6b', fontStyle: 'italic' }}>
-                            🚫 Sin: {item.note.trim()}
+                            🚫 Notas: {item.note.trim()}
                           </span>
                         </div>
                       )}

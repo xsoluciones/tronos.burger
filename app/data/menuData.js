@@ -18,6 +18,7 @@ export const defaultMenuData = [
         price: 20000,
         image: '/images/tronos-clasica.png',
         categoryId: 'burgers',
+        removableIngredients: ['Salsa Tronos', 'Queso Mozarella', 'Pepinillos Agridulces', 'Vegetales'],
         extras: [
           { id: 'ext-doble-carne', name: 'Doble Carne', price: 6000, image: '/images/tronos-clasica.png' },
           { id: 'ext-queso-extra', name: 'Extra Queso Mozarella', price: 3000, image: '/images/tronos-clasica.png' },
@@ -34,6 +35,7 @@ export const defaultMenuData = [
         price: 24000,
         image: '/images/la-noble.png',
         categoryId: 'burgers',
+        removableIngredients: ['Alioli de Ajo', 'Queso Colvijack', 'Cebolla Caramelizada', 'Tocineta', 'Lechuga Romana'],
         extras: [
           { id: 'ext-doble-carne-noble', name: 'Doble Carne', price: 6000, image: '/images/la-noble.png' },
           { id: 'ext-tocineta-extra', name: 'Extra Tocineta Ahumada', price: 4500, image: '/images/la-noble.png' }
@@ -49,6 +51,7 @@ export const defaultMenuData = [
         price: 25000,
         image: '/images/olimpo-smash.png',
         categoryId: 'burgers',
+        removableIngredients: ['Salsa Chipotle', 'Mermelada de Tocineta', 'Queso Cheddar'],
         extras: []
       },
       {
@@ -61,6 +64,7 @@ export const defaultMenuData = [
         price: 25000,
         image: '/images/suprema-valkiria.png',
         categoryId: 'burgers',
+        removableIngredients: ['Salsa Bigmac', 'Queso Colvijack', 'Tocineta Ahumada', 'Cebolla Caramelizada'],
         extras: []
       },
       {
@@ -73,6 +77,7 @@ export const defaultMenuData = [
         price: 26000,
         image: '/images/chicken-tronos.png',
         categoryId: 'burgers',
+        removableIngredients: ['Pepinillos', 'Tocineta', 'Salsa Sweet Chipotle', 'Especias picantes'],
       },
     ],
   }
