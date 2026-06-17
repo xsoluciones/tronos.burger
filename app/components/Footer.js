@@ -12,7 +12,7 @@ export default function Footer() {
     <footer className="footer" style={{ position: 'relative', overflow: 'hidden', padding: '4rem 0 2rem 0' }}>
       {/* Video de Fondo en el Pie de Página */}
       <video
-        src="/videos/intro.mp4"
+        src="/videos/brasas.mp4"
         autoPlay
         loop
         muted

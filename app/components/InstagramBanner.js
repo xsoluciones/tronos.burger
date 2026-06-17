@@ -15,7 +15,7 @@ export default function InstagramBanner() {
     >
       {/* Video de Fondo en el Banner */}
       <video
-        src="/videos/intro.mp4"
+        src="/videos/brasas.mp4"
         autoPlay
         loop
         muted
