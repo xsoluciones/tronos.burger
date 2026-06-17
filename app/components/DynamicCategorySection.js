@@ -40,6 +40,18 @@ export default function DynamicCategorySection({ category }) {
 
   return (
     <section id={category.id} ref={sectionRef} style={styles.section}>
+      <style>{`
+        @keyframes pointRight {
+          0%, 100% { transform: translateX(0) scale(1); }
+          50% { transform: translateX(5px) scale(1.1); }
+        }
+        .pointing-hand {
+          display: inline-block;
+          animation: pointRight 1s infinite ease-in-out;
+          margin-right: 6px;
+          font-size: 1.2em;
+        }
+      `}</style>
       <div className="container">
         {/* ── Section Header ── */}
         <div style={styles.headerWrapper}>
@@ -151,7 +163,12 @@ export default function DynamicCategorySection({ category }) {
                               gap: '4px',
                             }}
                           >
-                            {expandedExtrasId === item.id ? 'Ocultar adicionales ▲' : 'Adicionales ▼'}
+                            {expandedExtrasId === item.id ? 'Ocultar adicionales ▲' : (
+                              <>
+                                <span className="pointing-hand">👉</span>
+                                Adicionales ▼
+                              </>
+                            )}
                           </button>
                         )}
                       </div>
