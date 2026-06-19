@@ -92,7 +92,7 @@ export function MenuProvider({ children }) {
     try {
       const storedAuth = localStorage.getItem(STORAGE_KEY_AUTH);
       if (storedAuth === 'true') {
-        setIsAdmin(true);
+        setTimeout(() => setIsAdmin(true), 0);
       }
     } catch {
       // Ignorar errores

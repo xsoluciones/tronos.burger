@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { useMenu } from '@/app/context/MenuContext';
@@ -61,6 +61,13 @@ export default function AdminPage() {
 
   // Config Management State
   const [newSocial, setNewSocial] = useState({ name: '', url: '', image: '' });
+  const [whatsappInput, setWhatsappInput] = useState('');
+
+  useEffect(() => {
+    if (restaurantConfig?.whatsapp) {
+      setWhatsappInput(restaurantConfig.whatsapp);
+    }
+  }, [restaurantConfig?.whatsapp]);
 
   const handleLoginChange = (e) => {
     const { name, value } = e.target;
@@ -348,10 +355,21 @@ export default function AdminPage() {
                     <input 
                       type="text" 
                       className="form-input" 
-                      value={restaurantConfig?.whatsapp || ''} 
-                      onChange={(e) => updateWhatsApp(e.target.value)} 
+                      value={whatsappInput} 
+                      onChange={(e) => setWhatsappInput(e.target.value)} 
                       placeholder="Ej: 573007708816"
                     />
+                    <button 
+                      onClick={() => {
+                        updateWhatsApp(whatsappInput);
+                        setSuccessMessage('¡Número de WhatsApp guardado!');
+                        setTimeout(() => setSuccessMessage(''), 3000);
+                      }}
+                      className="action-btn"
+                      style={{ padding: '10px 20px', whiteSpace: 'nowrap' }}
+                    >
+                      Guardar
+                    </button>
                   </div>
                   <small className="text-muted mt-1 d-block">Número con código de país, sin el +. Ej: 573007708816</small>
                 </div>

@@ -136,7 +136,7 @@ export default function DynamicCategorySection({ category }) {
           <h2 style={styles.title}>{category.title.toUpperCase()}</h2>
           <div style={styles.underline} />
           <p style={{ color: '#ffffff', fontSize: '1.15rem', fontStyle: 'italic', fontWeight: '500', marginTop: '-10px', marginBottom: '40px' }}>
-            Toca el texto que dice "Personalizar ▼" en cada plato para añadir extras o quitar ingredientes ✨
+            Toca el texto que dice &quot;Personalizar ▼&quot; en cada plato para añadir extras o quitar ingredientes ✨
           </p>
         </div>
 
