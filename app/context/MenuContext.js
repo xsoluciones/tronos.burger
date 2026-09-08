@@ -9,8 +9,45 @@ const MenuContext = createContext(undefined);
 const STORAGE_KEY_MENU = 'tronos-menu';
 const STORAGE_KEY_AUTH = 'tronos-admin-auth';
 const STORAGE_KEY_CONFIG = 'tronos-config';
+const STORAGE_KEY_ORDERS = 'tronos-orders';
+const STORAGE_KEY_POS_FOLDER = 'tronos-pos-folder-name';
 const ADMIN_USERNAME = 'admin';
 const ADMIN_PASSWORD = 'tronos2024';
+
+const defaultDemoOrders = [
+  {
+    id: 'TRN-1001',
+    date: new Date(Date.now() - 1000 * 60 * 15).toISOString(),
+    customer: {
+      nombre: 'Carlos Pérez',
+      telefono: '3104567890',
+      direccion: 'Calle 45 # 12-34 Apto 302',
+      descripcion: 'Edificio Los Pinos, timbre 302'
+    },
+    items: [
+      {
+        id: 'tronos-clasica',
+        name: 'Tronos Clásica',
+        price: 24000,
+        quantity: 2,
+        selectedExtras: [{ name: 'Tocineta Ahumada', price: 4000, quantity: 2 }],
+        removedIngredients: ['Cebolla'],
+        note: 'Carne término 3/4 por favor'
+      },
+      {
+        id: 'papas-rusticas',
+        name: 'Papas Rústicas Tronos',
+        price: 9000,
+        quantity: 1,
+        selectedExtras: [],
+        removedIngredients: [],
+        note: 'Salsa tártara aparte'
+      }
+    ],
+    total: 61000,
+    status: 'pendiente'
+  }
+];
 
 const defaultRestaurantConfig = {
   whatsapp: '573007708816',
@@ -39,6 +76,59 @@ export function MenuProvider({ children }) {
 
   // ── Estado de ver más expandido (mutuamente excluyente) ──────────────
   const [expandedItemId, setExpandedItemId] = useState(null);
+
+  // ── Estado de Pedidos / Comandas POS ─────────────────────────────────
+  const [orders, setOrders] = useState(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem(STORAGE_KEY_ORDERS);
+        if (saved) return JSON.parse(saved);
+      } catch (e) {}
+    }
+    return defaultDemoOrders;
+  });
+
+  // Guardar pedidos en localStorage
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(orders));
+      } catch (e) {}
+    }
+  }, [orders]);
+
+  // ── Estado de carpeta de respaldo POS ────────────────────────────────
+  const [posBackupFolderName, setPosBackupFolderName] = useState(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        return localStorage.getItem(STORAGE_KEY_POS_FOLDER) || '';
+      } catch (e) {}
+    }
+    return '';
+  });
+
+  const updatePosBackupFolderName = useCallback((folderName) => {
+    setPosBackupFolderName(folderName);
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem(STORAGE_KEY_POS_FOLDER, folderName);
+      } catch (e) {}
+    }
+  }, []);
+
+  const addOrder = useCallback((newOrder) => {
+    setOrders((prev) => [newOrder, ...prev]);
+  }, []);
+
+  const updateOrderStatus = useCallback((orderId, status) => {
+    setOrders((prev) =>
+      prev.map((o) => (o.id === orderId ? { ...o, status } : o))
+    );
+  }, []);
+
+  const deleteOrder = useCallback((orderId) => {
+    setOrders((prev) => prev.filter((o) => o.id !== orderId));
+  }, []);
 
   // ── Cargar datos de Supabase después del montaje (solo cliente) ──
   useEffect(() => {
@@ -399,6 +489,12 @@ export function MenuProvider({ children }) {
       isAdmin,
       login,
       logout,
+      orders,
+      addOrder,
+      updateOrderStatus,
+      deleteOrder,
+      posBackupFolderName,
+      updatePosBackupFolderName,
     }),
     [
       menuCategories,
@@ -427,6 +523,12 @@ export function MenuProvider({ children }) {
       isAdmin,
       login,
       logout,
+      orders,
+      addOrder,
+      updateOrderStatus,
+      deleteOrder,
+      posBackupFolderName,
+      updatePosBackupFolderName,
     ]
   );
 

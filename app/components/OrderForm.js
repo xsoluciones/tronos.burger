@@ -5,7 +5,7 @@ import { useMenu } from '@/app/context/MenuContext';
 import { formatPrice } from '@/app/data/menuData';
 
 export default function OrderForm({ onClose }) {
-  const { cart, cartTotal, clearCart, restaurantConfig } = useMenu();
+  const { cart, cartTotal, clearCart, restaurantConfig, addOrder } = useMenu();
 
   const [form, setForm] = useState({
     nombre: '',
@@ -74,6 +74,23 @@ export default function OrderForm({ onClose }) {
     const url = `https://wa.me/${whatsappNumber}?text=${encoded}`;
 
     window.open(url, '_blank');
+
+    // Registrar pedido en el sistema POS
+    if (addOrder) {
+      addOrder({
+        id: `TRN-${Date.now().toString().slice(-4)}`,
+        date: new Date().toISOString(),
+        customer: {
+          nombre: form.nombre.trim(),
+          telefono: form.telefono.trim(),
+          direccion: form.direccion.trim(),
+          descripcion: form.descripcion.trim(),
+        },
+        items: JSON.parse(JSON.stringify(cart)),
+        total: cartTotal,
+        status: 'pendiente',
+      });
+    }
 
     // Clear and show success
     clearCart();
