@@ -73,6 +73,7 @@ export const cleanWhatsAppNumber = (phone) => {
 
 const defaultRestaurantConfig = {
   whatsapp: '573007708616',
+  deliveryPrice: 4000,
   socials: [
     { id: 'soc-1', name: 'Instagram', url: 'https://instagram.com', icon: '📸' }
   ]
@@ -172,10 +173,10 @@ export function MenuProvider({ children }) {
     if (typeof window !== 'undefined') {
       try {
         const saved = localStorage.getItem(STORAGE_KEY_ORDERS);
-        if (saved) return JSON.parse(saved);
+        if (saved !== null) return JSON.parse(saved);
       } catch (e) {}
     }
-    return defaultDemoOrders;
+    return [];
   });
 
   // ── Estado de Auditoría Central / Respaldo Maestro ───────────────────
@@ -183,10 +184,10 @@ export function MenuProvider({ children }) {
     if (typeof window !== 'undefined') {
       try {
         const saved = localStorage.getItem(STORAGE_KEY_AUDIT_ORDERS);
-        if (saved) return JSON.parse(saved);
+        if (saved !== null) return JSON.parse(saved);
       } catch (e) {}
     }
-    return defaultDemoOrders;
+    return [];
   });
 
   // Guardar pedidos activos en localStorage
@@ -557,27 +558,21 @@ export function MenuProvider({ children }) {
           if (data.config_data) {
             let parsedConfig = data.config_data;
             if (typeof parsedConfig === 'string') parsedConfig = JSON.parse(parsedConfig);
-            if (parsedConfig && parsedConfig.whatsapp) {
-              setRestaurantConfig((prev) => {
-                const localSaved = typeof window !== 'undefined' ? localStorage.getItem(STORAGE_KEY_CONFIG) : null;
-                if (localSaved) {
-                  try {
-                    const parsedLocal = JSON.parse(localSaved);
-                    if (parsedLocal?.whatsapp) {
-                      return { ...parsedConfig, ...parsedLocal, whatsapp: cleanWhatsAppNumber(parsedLocal.whatsapp) };
-                    }
-                  } catch (e) {}
-                }
-                return { ...prev, ...parsedConfig, whatsapp: cleanWhatsAppNumber(parsedConfig.whatsapp) };
-              });
+            if (parsedConfig && typeof parsedConfig === 'object') {
+              setRestaurantConfig((prev) => ({
+                ...prev,
+                ...parsedConfig,
+                whatsapp: cleanWhatsAppNumber(parsedConfig.whatsapp || prev.whatsapp),
+                deliveryPrice: parsedConfig.deliveryPrice !== undefined ? Number(parsedConfig.deliveryPrice) : (prev.deliveryPrice || 4000),
+              }));
             }
           }
 
           // Parse active orders (Acceso multi-computador)
-          const rawOrders = data.orders_data || data.config_data?.orders_data;
-          if (rawOrders) {
+          const rawOrders = data.orders_data !== undefined ? data.orders_data : data.config_data?.orders_data;
+          if (rawOrders !== undefined && rawOrders !== null) {
             const parsedOrders = typeof rawOrders === 'string' ? JSON.parse(rawOrders) : rawOrders;
-            if (Array.isArray(parsedOrders) && parsedOrders.length > 0) {
+            if (Array.isArray(parsedOrders)) {
               setOrders(parsedOrders);
               if (typeof window !== 'undefined') {
                 try { localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(parsedOrders)); } catch (e) {}
@@ -586,10 +581,10 @@ export function MenuProvider({ children }) {
           }
 
           // Parse audit orders (Acceso multi-computador)
-          const rawAudit = data.audit_orders_data || data.config_data?.audit_orders_data;
-          if (rawAudit) {
+          const rawAudit = data.audit_orders_data !== undefined ? data.audit_orders_data : data.config_data?.audit_orders_data;
+          if (rawAudit !== undefined && rawAudit !== null) {
             const parsedAudit = typeof rawAudit === 'string' ? JSON.parse(rawAudit) : rawAudit;
-            if (Array.isArray(parsedAudit) && parsedAudit.length > 0) {
+            if (Array.isArray(parsedAudit)) {
               setAuditOrders(parsedAudit);
               if (typeof window !== 'undefined') {
                 try { localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(parsedAudit)); } catch (e) {}
@@ -1061,10 +1056,16 @@ export function MenuProvider({ children }) {
           localStorage.setItem(STORAGE_KEY_CONFIG, JSON.stringify(updated));
         } catch (e) {}
       }
+      try {
+        supabase
+          .from('app_state')
+          .update({ config_data: updated })
+          .eq('id', 'tronos')
+          .then(() => {});
+      } catch (e) {}
       return updated;
     });
 
-    // Notificar a todas las pestañas (Carta web de clientes, Caja, Admin)
     if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
       try {
         const channel = new BroadcastChannel('tronos_orders_channel');
@@ -1073,16 +1074,37 @@ export function MenuProvider({ children }) {
       } catch (e) {}
     }
 
-    try {
-      supabase
-        .from('app_state')
-        .update({ config_data: { whatsapp: cleaned } })
-        .eq('id', 'tronos')
-        .then(() => {})
-        .catch(() => {});
-    } catch (e) {}
-
     return cleaned;
+  }, []);
+
+  const updateDeliveryPrice = useCallback((price) => {
+    const num = Math.max(0, parseInt(price, 10) || 0);
+    setRestaurantConfig((prev) => {
+      const updated = { ...prev, deliveryPrice: num };
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem(STORAGE_KEY_CONFIG, JSON.stringify(updated));
+        } catch (e) {}
+      }
+      try {
+        supabase
+          .from('app_state')
+          .update({ config_data: updated })
+          .eq('id', 'tronos')
+          .then(() => {});
+      } catch (e) {}
+      return updated;
+    });
+
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      try {
+        const channel = new BroadcastChannel('tronos_orders_channel');
+        channel.postMessage({ type: 'SYNC_CONFIG', data: { deliveryPrice: num } });
+        channel.close();
+      } catch (e) {}
+    }
+
+    return num;
   }, []);
 
   const addSocial = useCallback((social) => {
@@ -1146,6 +1168,7 @@ export function MenuProvider({ children }) {
       deleteCategory,
       restaurantConfig,
       updateWhatsApp,
+      updateDeliveryPrice,
       addSocial,
       removeSocial,
       updateSocial,
@@ -1187,6 +1210,7 @@ export function MenuProvider({ children }) {
       deleteCategory,
       restaurantConfig,
       updateWhatsApp,
+      updateDeliveryPrice,
       addSocial,
       removeSocial,
       updateSocial,

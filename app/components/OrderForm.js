@@ -49,11 +49,12 @@ export default function OrderForm({ onClose }) {
     const origin = typeof window !== 'undefined' ? window.location.origin : 'https://tronospub.com';
     const trackingUrl = `${origin}/pedido/${orderId}`;
 
-    const deliveryFee = orderType === 'domicilio' ? 4000 : 0;
+    const currentDeliveryPrice = restaurantConfig?.deliveryPrice !== undefined ? Number(restaurantConfig.deliveryPrice) : 4000;
+    const deliveryFee = orderType === 'domicilio' ? currentDeliveryPrice : 0;
     const finalTotal = cartTotal + deliveryFee;
 
     const deliveryHeader = orderType === 'domicilio'
-      ? '🚴 *TIPO:* Quiero que me lo traigan a mi casa (Domicilio +$4.000)'
+      ? `🚴 *TIPO:* Quiero que me lo traigan a mi casa (Domicilio +${formatPrice(currentDeliveryPrice)})`
       : '🏪 *TIPO:* Yo lo voy a buscar (Recoger en local)';
 
     // Build WhatsApp message con enlace de seguimiento y manita
@@ -79,7 +80,7 @@ export default function OrderForm({ onClose }) {
         }
         return [itemLine, ...extraLines];
       }),
-      orderType === 'domicilio' ? `• Domicilio: ${formatPrice(4000)}` : null,
+      orderType === 'domicilio' ? `• Domicilio: ${formatPrice(currentDeliveryPrice)}` : null,
       '',
       `💰 *Total: ${formatPrice(finalTotal)}*`,
       '',
@@ -241,7 +242,7 @@ export default function OrderForm({ onClose }) {
                         borderRadius: '12px',
                         fontWeight: '800'
                       }}>
-                        + $4.000 domicilio
+                        + {formatPrice(restaurantConfig?.deliveryPrice !== undefined ? Number(restaurantConfig.deliveryPrice) : 4000)} domicilio
                       </span>
                     </button>
 
@@ -398,7 +399,7 @@ export default function OrderForm({ onClose }) {
                     {orderType === 'domicilio' && (
                       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', color: '#f0c96b', marginBottom: '4px' }}>
                         <span>🚴 Domicilio</span>
-                        <span>+{formatPrice(4000)}</span>
+                        <span>+{formatPrice(restaurantConfig?.deliveryPrice !== undefined ? Number(restaurantConfig.deliveryPrice) : 4000)}</span>
                       </div>
                     )}
                     {orderType === 'recoger' && (
@@ -411,7 +412,7 @@ export default function OrderForm({ onClose }) {
 
                   <div style={styles.summaryTotal}>
                     <span>Total a Pagar</span>
-                    <span>{formatPrice(cartTotal + (orderType === 'domicilio' ? 4000 : 0))}</span>
+                    <span>{formatPrice(cartTotal + (orderType === 'domicilio' ? (restaurantConfig?.deliveryPrice !== undefined ? Number(restaurantConfig.deliveryPrice) : 4000) : 0))}</span>
                   </div>
                 </div>
 

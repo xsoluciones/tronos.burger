@@ -47,8 +47,10 @@ export default function CajaPage() {
     logout,
     orders = [],
     auditOrders = [],
+    addOrder,
     updateOrderStatus,
     markOrderInvoiced,
+    deleteOrder,
     resetAllOrdersData,
     menuCategories = [],
     posBackupFolderName,
@@ -112,6 +114,163 @@ export default function CajaPage() {
 
   // El cajero o el admin pueden ingresar a esta vista
   const isAuthorized = isCajero || isAdmin;
+
+  // ── Estados y Métodos para Crear Comanda Manual en Caja ─────────────
+  const [showManualOrderModal, setShowManualOrderModal] = useState(false);
+  const [manualCustomer, setManualCustomer] = useState({
+    nombre: '',
+    telefono: '',
+    direccion: '',
+    orderType: 'local', // 'local' | 'recoger' | 'domicilio'
+    paymentMethod: 'Efectivo',
+    notas: '',
+  });
+  const [manualCart, setManualCart] = useState([]);
+  const [manualCategoryFilter, setManualCategoryFilter] = useState('all');
+  const [manualProductSearch, setManualProductSearch] = useState('');
+  const [manualCustomName, setManualCustomName] = useState('');
+  const [manualCustomPrice, setManualCustomPrice] = useState('');
+
+  const allManualProducts = useMemo(() => {
+    const list = [];
+    (menuCategories || []).forEach((cat) => {
+      (cat.items || []).forEach((prod) => {
+        list.push({ ...prod, categoryId: cat.id, categoryName: cat.name });
+      });
+    });
+    return list;
+  }, [menuCategories]);
+
+  const filteredManualProducts = useMemo(() => {
+    return allManualProducts.filter((p) => {
+      const matchesCat = manualCategoryFilter === 'all' || p.categoryId === manualCategoryFilter;
+      const matchesSearch = !manualProductSearch.trim() || p.name.toLowerCase().includes(manualProductSearch.toLowerCase());
+      return matchesCat && matchesSearch;
+    });
+  }, [allManualProducts, manualCategoryFilter, manualProductSearch]);
+
+  const handleAddProductToManualCart = (prod) => {
+    setManualCart((prev) => {
+      const existingIndex = prev.findIndex((item) => item.id === prod.id && !item.isCustom);
+      if (existingIndex >= 0) {
+        const updated = [...prev];
+        updated[existingIndex].quantity += 1;
+        return updated;
+      }
+      return [
+        ...prev,
+        {
+          id: prod.id,
+          name: prod.name,
+          price: prod.price || 0,
+          quantity: 1,
+          note: '',
+          isCustom: false,
+        },
+      ];
+    });
+  };
+
+  const handleAddCustomItem = (e) => {
+    if (e) e.preventDefault();
+    if (!manualCustomName.trim() || !manualCustomPrice) return;
+    const priceNum = parseInt(manualCustomPrice, 10);
+    if (isNaN(priceNum) || priceNum < 0) return;
+    setManualCart((prev) => [
+      ...prev,
+      {
+        id: `custom-${Date.now()}`,
+        name: manualCustomName.trim(),
+        price: priceNum,
+        quantity: 1,
+        note: '',
+        isCustom: true,
+      },
+    ]);
+    setManualCustomName('');
+    setManualCustomPrice('');
+  };
+
+  const handleUpdateManualCartQty = (index, delta) => {
+    setManualCart((prev) => {
+      const updated = [...prev];
+      const newQty = (updated[index].quantity || 1) + delta;
+      if (newQty <= 0) {
+        return updated.filter((_, i) => i !== index);
+      }
+      updated[index].quantity = newQty;
+      return updated;
+    });
+  };
+
+  const handleRemoveManualCartItem = (index) => {
+    setManualCart((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleCreateManualOrder = async (invoicingImmediately = false) => {
+    if (!manualCustomer.nombre.trim()) {
+      showToast('Por favor escribe el nombre del cliente o número de mesa.', 'error');
+      return;
+    }
+    if (manualCart.length === 0) {
+      showToast('Debes agregar al menos un producto a la comanda.', 'error');
+      return;
+    }
+
+    const deliveryFee = manualCustomer.orderType === 'domicilio' ? (restaurantConfig?.deliveryPrice || 4000) : 0;
+    const subtotal = manualCart.reduce((sum, item) => sum + ((item.price || 0) * (item.quantity || 1)), 0);
+    const total = subtotal + deliveryFee;
+
+    const newOrderId = `TRN-${Date.now().toString().slice(-4)}`;
+    const newOrder = {
+      id: newOrderId,
+      date: new Date().toISOString(),
+      status: invoicingImmediately ? 'en_cocina' : 'pendiente',
+      orderType: manualCustomer.orderType,
+      customer: {
+        nombre: manualCustomer.nombre.trim(),
+        telefono: manualCustomer.telefono.trim() || 'N/A',
+        direccion: manualCustomer.direccion.trim() || (manualCustomer.orderType === 'local' ? 'Consumo en Mesa / Local' : (manualCustomer.orderType === 'domicilio' ? 'Domicilio' : 'Para llevar / Mostrador')),
+        descripcion: manualCustomer.notas.trim() || '',
+      },
+      items: manualCart.map((it) => ({
+        id: it.id,
+        name: it.name,
+        price: it.price,
+        quantity: it.quantity,
+        note: it.note || '',
+        selectedExtras: [],
+        removedIngredients: [],
+      })),
+      deliveryFee,
+      subtotal,
+      total,
+      paymentMethod: manualCustomer.paymentMethod || 'Efectivo',
+      createdVia: 'caja_manual',
+      invoiced: invoicingImmediately,
+      invoicedAt: invoicingImmediately ? new Date().toISOString() : null,
+      invoicedBy: invoicingImmediately ? 'caja' : null,
+    };
+
+    addOrder(newOrder);
+    setShowManualOrderModal(false);
+    setManualCustomer({
+      nombre: '',
+      telefono: '',
+      direccion: '',
+      orderType: 'local',
+      paymentMethod: 'Efectivo',
+      notas: '',
+    });
+    setManualCart([]);
+
+    if (invoicingImmediately) {
+      showToast(`Comanda #${newOrderId} creada. Generando factura...`);
+      await handleFacturarTresCopias(newOrder);
+    } else {
+      showToast(`Comanda manual #${newOrderId} creada exitosamente.`);
+    }
+  };
 
   // ── Modo Tema Claro por Defecto y Único ──
   const [theme, setTheme] = useState('light');
@@ -1431,6 +1590,26 @@ export default function CajaPage() {
                 {hideDelivered ? 'Entregados ocultos' : 'Entregados visibles'}
               </span>
             </button>
+
+            {/* Botón Destacado: Crear Comanda Manual */}
+            <button
+              onClick={() => setShowManualOrderModal(true)}
+              className="btn btn-sm d-inline-flex align-items-center gap-1.5 fw-bold shadow-sm"
+              style={{
+                background: 'linear-gradient(135deg, #ea580c 0%, #c2410c 100%)',
+                color: '#ffffff',
+                border: 'none',
+                borderRadius: '6px',
+                padding: '5px 13px',
+                fontSize: '12px',
+                cursor: 'pointer',
+                letterSpacing: '0.2px',
+              }}
+              title="Crear comanda manualmente para clientes presenciales o por llamada"
+            >
+              <span style={{ fontSize: '13px' }}>➕</span>
+              <span>Crear Comanda Manual</span>
+            </button>
           </div>
 
           {/* Buscador compacto */}
@@ -2041,12 +2220,25 @@ export default function CajaPage() {
                         )}
                       </div>
 
-                      {/* Nota de Auditoría Central / Restricción de Seguridad */}
+                      {/* Nota de Auditoría Central / Restricción de Seguridad & Eliminar */}
                       <div
-                        className="mt-1.5 pt-1 border-top text-center"
+                        className="mt-1.5 pt-1 border-top d-flex justify-content-between align-items-center"
                         style={{ borderColor: 'rgba(0,0,0,0.06)', fontSize: '9px', color: '#94a3b8' }}
                       >
                         <span>🔒 Auditoría Central</span>
+                        <button
+                          onClick={() => {
+                            if (confirm(`¿Estás seguro de eliminar la comanda #${order.id}? Se borrará inmediatamente del panel y de Supabase.`)) {
+                              deleteOrder(order.id, 'Anulado desde Caja');
+                              showToast(`Comanda #${order.id} eliminada permanentemente.`);
+                            }
+                          }}
+                          className="btn btn-link p-0 text-decoration-none"
+                          style={{ fontSize: '9.5px', color: '#dc2626', fontWeight: 700 }}
+                          title="Eliminar comanda permanentemente"
+                        >
+                          🗑️ Eliminar
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -2218,6 +2410,447 @@ export default function CajaPage() {
               >
                 <span>💾 Guardar y Vincular</span>
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── MODAL CREAR COMANDA MANUAL (VENTA PRESENCIAL / TELEFÓNICA) ── */}
+      {showManualOrderModal && (
+        <div
+          className="position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center p-2 p-md-3"
+          style={{
+            background: 'rgba(0, 0, 0, 0.75)',
+            backdropFilter: 'blur(4px)',
+            zIndex: 1100,
+          }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowManualOrderModal(false);
+          }}
+        >
+          <div
+            className="rounded-4 shadow-2xl d-flex flex-column"
+            style={{
+              maxWidth: '920px',
+              width: '100%',
+              maxHeight: '92vh',
+              background: '#ffffff',
+              color: '#0f172a',
+              overflow: 'hidden',
+            }}
+          >
+            {/* Header del Modal */}
+            <div className="px-4 py-3 border-bottom d-flex justify-content-between align-items-center bg-dark text-white">
+              <div className="d-flex align-items-center gap-2">
+                <span style={{ fontSize: '18px' }}>📝</span>
+                <div>
+                  <h6 className="mb-0 fw-bold" style={{ fontSize: '15px', letterSpacing: '0.3px' }}>
+                    Crear Comanda Manual (Presencial / Mostrador / Domicilio)
+                  </h6>
+                  <span style={{ fontSize: '11px', color: '#cbd5e1' }}>
+                    Registra pedidos directos sin necesidad de pasar por la página web
+                  </span>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowManualOrderModal(false)}
+                className="btn btn-sm btn-outline-light d-flex align-items-center justify-content-center rounded-circle"
+                style={{ width: '30px', height: '30px', padding: 0 }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Cuerpo del Modal: 2 Columnas */}
+            <div className="p-3 p-md-4 overflow-auto flex-grow-1">
+              <div className="row g-3">
+                {/* Columna Izquierda: Datos del Cliente y Selección de Productos */}
+                <div className="col-12 col-lg-7">
+                  {/* Selector de Tipo de Pedido */}
+                  <div className="mb-3">
+                    <label className="fw-bold mb-1.5" style={{ fontSize: '11.5px', color: '#475569' }}>
+                      TIPO DE PEDIDO:
+                    </label>
+                    <div className="d-flex gap-2">
+                      {[
+                        { id: 'local', label: '🍽️ Consumo Local / Mesa' },
+                        { id: 'recoger', label: '🛍️ Para Llevar' },
+                        { id: 'domicilio', label: `🛵 Domicilio (+${formatPrice(restaurantConfig?.deliveryPrice || 4000)})` },
+                      ].map((type) => {
+                        const isSelected = manualCustomer.orderType === type.id;
+                        return (
+                          <button
+                            key={type.id}
+                            type="button"
+                            onClick={() => setManualCustomer((prev) => ({ ...prev, orderType: type.id }))}
+                            className="btn btn-sm flex-fill fw-bold py-1.5 text-center"
+                            style={{
+                              background: isSelected ? '#ea580c' : '#f1f5f9',
+                              color: isSelected ? '#ffffff' : '#334155',
+                              border: isSelected ? '1px solid #c2410c' : '1px solid #cbd5e1',
+                              borderRadius: '7px',
+                              fontSize: '11.5px',
+                              transition: 'all 0.15s ease',
+                            }}
+                          >
+                            {type.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Formulario Datos Cliente */}
+                  <div className="p-3 mb-3 rounded-3" style={{ background: '#f8fafc', border: '1px solid #e2e8f0' }}>
+                    <div className="row g-2">
+                      <div className="col-12 col-md-6">
+                        <label className="fw-bold" style={{ fontSize: '11px', color: '#334155' }}>
+                          Nombre / Identificador Mesa <span style={{ color: '#dc2626' }}>*</span>
+                        </label>
+                        <input
+                          type="text"
+                          className="form-control form-control-sm"
+                          placeholder="Ej: Mesa 4 / Carlos Ruiz"
+                          value={manualCustomer.nombre}
+                          onChange={(e) => setManualCustomer((p) => ({ ...p, nombre: e.target.value }))}
+                          style={{ fontSize: '12px', borderRadius: '6px' }}
+                        />
+                      </div>
+                      <div className="col-12 col-md-6">
+                        <label className="fw-bold" style={{ fontSize: '11px', color: '#334155' }}>
+                          Teléfono del Cliente
+                        </label>
+                        <input
+                          type="text"
+                          className="form-control form-control-sm"
+                          placeholder="Ej: 3001234567"
+                          value={manualCustomer.telefono}
+                          onChange={(e) => setManualCustomer((p) => ({ ...p, telefono: e.target.value }))}
+                          style={{ fontSize: '12px', borderRadius: '6px' }}
+                        />
+                      </div>
+                      {manualCustomer.orderType === 'domicilio' && (
+                        <div className="col-12">
+                          <label className="fw-bold" style={{ fontSize: '11px', color: '#ea580c' }}>
+                            📍 Dirección de Entrega <span style={{ color: '#dc2626' }}>*</span>
+                          </label>
+                          <input
+                            type="text"
+                            className="form-control form-control-sm"
+                            placeholder="Ej: Cra 15 # 45-20 Apto 302"
+                            value={manualCustomer.direccion}
+                            onChange={(e) => setManualCustomer((p) => ({ ...p, direccion: e.target.value }))}
+                            style={{ fontSize: '12px', borderRadius: '6px', borderColor: '#fdba74' }}
+                          />
+                        </div>
+                      )}
+                      <div className="col-12 col-md-6">
+                        <label className="fw-bold" style={{ fontSize: '11px', color: '#334155' }}>
+                          Método de Pago
+                        </label>
+                        <select
+                          className="form-select form-select-sm"
+                          value={manualCustomer.paymentMethod}
+                          onChange={(e) => setManualCustomer((p) => ({ ...p, paymentMethod: e.target.value }))}
+                          style={{ fontSize: '12px', borderRadius: '6px' }}
+                        >
+                          <option value="Efectivo">💵 Efectivo</option>
+                          <option value="Nequi / Daviplata">📱 Nequi / Daviplata</option>
+                          <option value="Tarjeta / Datáfono">💳 Tarjeta / Datáfono</option>
+                          <option value="Transferencia">🏦 Transferencia</option>
+                        </select>
+                      </div>
+                      <div className="col-12 col-md-6">
+                        <label className="fw-bold" style={{ fontSize: '11px', color: '#334155' }}>
+                          Observaciones / Notas
+                        </label>
+                        <input
+                          type="text"
+                          className="form-control form-control-sm"
+                          placeholder="Ej: Poco picante, servilletas extra"
+                          value={manualCustomer.notas}
+                          onChange={(e) => setManualCustomer((p) => ({ ...p, notas: e.target.value }))}
+                          style={{ fontSize: '12px', borderRadius: '6px' }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Selector de Menú */}
+                  <div className="border rounded-3 p-3" style={{ background: '#ffffff' }}>
+                    <div className="d-flex justify-content-between align-items-center mb-2">
+                      <span className="fw-bold" style={{ fontSize: '12px', color: '#0f172a' }}>
+                        🍔 Seleccionar Productos del Menú:
+                      </span>
+                      <input
+                        type="text"
+                        placeholder="Buscar producto..."
+                        value={manualProductSearch}
+                        onChange={(e) => setManualProductSearch(e.target.value)}
+                        className="form-control form-control-sm"
+                        style={{ maxWidth: '170px', fontSize: '11px', padding: '3px 8px' }}
+                      />
+                    </div>
+
+                    {/* Filtros de Categoría */}
+                    <div className="d-flex gap-1 overflow-auto pb-1 mb-2" style={{ whiteSpace: 'nowrap' }}>
+                      <button
+                        type="button"
+                        onClick={() => setManualCategoryFilter('all')}
+                        className={`btn btn-sm py-0.5 px-2 ${manualCategoryFilter === 'all' ? 'btn-dark' : 'btn-light border'}`}
+                        style={{ fontSize: '11px', borderRadius: '12px' }}
+                      >
+                        Todos ({allManualProducts.length})
+                      </button>
+                      {(menuCategories || []).map((cat) => (
+                        <button
+                          key={cat.id}
+                          type="button"
+                          onClick={() => setManualCategoryFilter(cat.id)}
+                          className={`btn btn-sm py-0.5 px-2 ${manualCategoryFilter === cat.id ? 'btn-dark' : 'btn-light border'}`}
+                          style={{ fontSize: '11px', borderRadius: '12px' }}
+                        >
+                          {cat.name}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Lista rápida de productos para agregar con 1 clic */}
+                    <div style={{ maxHeight: '180px', overflowY: 'auto', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '6px' }}>
+                      {filteredManualProducts.map((p) => (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => handleAddProductToManualCart(p)}
+                          className="btn btn-sm text-start p-2 d-flex flex-column justify-content-between"
+                          style={{
+                            background: '#f8fafc',
+                            border: '1px solid #e2e8f0',
+                            borderRadius: '7px',
+                            minHeight: '48px',
+                            transition: 'all 0.1s ease',
+                          }}
+                        >
+                          <span style={{ fontSize: '11px', fontWeight: 800, color: '#0f172a', lineHeight: '1.2' }}>
+                            + {p.name}
+                          </span>
+                          <span style={{ fontSize: '11px', fontWeight: 700, color: '#166534', marginTop: '3px' }}>
+                            {formatPrice(p.price || 0)}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Ítem Personalizado Manual (para ventas fuera de carta) */}
+                    <div className="mt-2.5 pt-2 border-top d-flex gap-2 align-items-center">
+                      <span style={{ fontSize: '11px', fontWeight: 700, color: '#64748b', whiteSpace: 'nowrap' }}>
+                        ➕ Otro ítem:
+                      </span>
+                      <input
+                        type="text"
+                        placeholder="Descripción o ítem"
+                        value={manualCustomName}
+                        onChange={(e) => setManualCustomName(e.target.value)}
+                        className="form-control form-control-sm"
+                        style={{ fontSize: '11px' }}
+                      />
+                      <input
+                        type="number"
+                        placeholder="Precio $"
+                        value={manualCustomPrice}
+                        onChange={(e) => setManualCustomPrice(e.target.value)}
+                        className="form-control form-control-sm"
+                        style={{ maxWidth: '90px', fontSize: '11px' }}
+                      />
+                      <button
+                        type="button"
+                        onClick={handleAddCustomItem}
+                        className="btn btn-sm btn-outline-dark fw-bold"
+                        style={{ fontSize: '11px', whiteSpace: 'nowrap' }}
+                      >
+                        Añadir
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Columna Derecha: Canasta y Totales de la Comanda */}
+                <div className="col-12 col-lg-5 d-flex flex-column">
+                  <div
+                    className="p-3 rounded-3 flex-grow-1 d-flex flex-column"
+                    style={{ background: '#f8fafc', border: '1.5px solid #cbd5e1' }}
+                  >
+                    <div className="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
+                      <span className="fw-bold" style={{ fontSize: '13px', color: '#0f172a' }}>
+                        🛒 Comanda Actual ({manualCart.reduce((sum, it) => sum + it.quantity, 0)} ítems)
+                      </span>
+                      {manualCart.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setManualCart([])}
+                          className="btn btn-link p-0 text-danger text-decoration-none"
+                          style={{ fontSize: '11px', fontWeight: 700 }}
+                        >
+                          Vaciar
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Lista de Ítems en Carrito */}
+                    <div className="flex-grow-1 overflow-auto pe-1" style={{ minHeight: '160px', maxHeight: '250px' }}>
+                      {manualCart.length === 0 ? (
+                        <div className="h-100 d-flex flex-column align-items-center justify-content-center text-center p-3 text-muted">
+                          <span style={{ fontSize: '26px', opacity: 0.5 }}>🍽️</span>
+                          <span style={{ fontSize: '12px', fontWeight: 600, marginTop: '6px' }}>
+                            No hay productos agregados
+                          </span>
+                          <span style={{ fontSize: '11px', color: '#94a3b8' }}>
+                            Haz clic en los productos de la izquierda para incluirlos
+                          </span>
+                        </div>
+                      ) : (
+                        manualCart.map((item, idx) => (
+                          <div
+                            key={idx}
+                            className="p-2 mb-1.5 rounded-2 bg-white border"
+                            style={{ borderColor: '#e2e8f0', fontSize: '11.5px' }}
+                          >
+                            <div className="d-flex justify-content-between align-items-center">
+                              <div style={{ fontWeight: 800, color: '#0f172a', maxWidth: '160px' }} className="text-truncate">
+                                {item.name}
+                              </div>
+                              <span style={{ fontWeight: 800, color: '#166534' }}>
+                                {formatPrice((item.price || 0) * (item.quantity || 1))}
+                              </span>
+                            </div>
+
+                            <div className="d-flex justify-content-between align-items-center mt-1.5">
+                              <div className="d-flex align-items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateManualCartQty(idx, -1)}
+                                  className="btn btn-sm btn-light border py-0 px-2 fw-bold"
+                                  style={{ fontSize: '11px', lineHeight: '1.4' }}
+                                >
+                                  -
+                                </button>
+                                <span className="fw-bold px-1" style={{ fontSize: '12px' }}>
+                                  {item.quantity}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateManualCartQty(idx, 1)}
+                                  className="btn btn-sm btn-light border py-0 px-2 fw-bold"
+                                  style={{ fontSize: '11px', lineHeight: '1.4' }}
+                                >
+                                  +
+                                </button>
+                              </div>
+
+                              <input
+                                type="text"
+                                placeholder="Nota (ej. sin cebolla)"
+                                value={item.note || ''}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setManualCart((p) => {
+                                    const next = [...p];
+                                    next[idx].note = val;
+                                    return next;
+                                  });
+                                }}
+                                className="form-control form-control-sm py-0 px-1 mx-2"
+                                style={{ fontSize: '10.5px', height: '22px' }}
+                              />
+
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveManualCartItem(idx)}
+                                className="btn btn-sm btn-link p-0 text-danger"
+                                title="Eliminar ítem"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+
+                    {/* Desglose de Totales */}
+                    <div className="border-top pt-2.5 mt-2">
+                      <div className="d-flex justify-content-between mb-1" style={{ fontSize: '11.5px', color: '#475569' }}>
+                        <span>Subtotal Productos:</span>
+                        <span className="fw-bold">
+                          {formatPrice(manualCart.reduce((sum, it) => sum + ((it.price || 0) * (it.quantity || 1)), 0))}
+                        </span>
+                      </div>
+
+                      {manualCustomer.orderType === 'domicilio' && (
+                        <div className="d-flex justify-content-between mb-1" style={{ fontSize: '11.5px', color: '#ea580c' }}>
+                          <span>🛵 Costo Domicilio:</span>
+                          <span className="fw-bold">
+                            +{formatPrice(restaurantConfig?.deliveryPrice || 4000)}
+                          </span>
+                        </div>
+                      )}
+
+                      <div className="d-flex justify-content-between align-items-center border-top pt-2 mt-1">
+                        <span style={{ fontSize: '14px', fontWeight: 900, color: '#0f172a' }}>TOTAL A COBRAR:</span>
+                        <span style={{ fontSize: '19px', fontWeight: 900, color: '#15803d' }}>
+                          {formatPrice(
+                            manualCart.reduce((sum, it) => sum + ((it.price || 0) * (it.quantity || 1)), 0) +
+                            (manualCustomer.orderType === 'domicilio' ? (restaurantConfig?.deliveryPrice || 4000) : 0)
+                          )}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Botones de Finalización */}
+                    <div className="d-flex flex-column gap-2 mt-3">
+                      <button
+                        type="button"
+                        onClick={() => handleCreateManualOrder(true)}
+                        disabled={manualCart.length === 0 || !manualCustomer.nombre.trim()}
+                        className="btn btn-dark fw-bold py-2 d-flex align-items-center justify-content-center gap-1.5 shadow-sm"
+                        style={{
+                          borderRadius: '8px',
+                          fontSize: '12.5px',
+                          background: '#0f172a',
+                          border: 'none',
+                        }}
+                      >
+                        <IconPrinter size={15} />
+                        <span>Crear y Facturar Inmediato (3 Copias)</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleCreateManualOrder(false)}
+                        disabled={manualCart.length === 0 || !manualCustomer.nombre.trim()}
+                        className="btn btn-primary fw-bold py-2 d-flex align-items-center justify-content-center gap-1.5"
+                        style={{
+                          borderRadius: '8px',
+                          fontSize: '12.5px',
+                          background: '#7c3aed',
+                          borderColor: '#7c3aed',
+                        }}
+                      >
+                        <span>👨‍🍳 Crear y Enviar a Cocina</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setShowManualOrderModal(false)}
+                        className="btn btn-sm btn-outline-secondary py-1"
+                        style={{ fontSize: '11px', borderRadius: '6px' }}
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>

@@ -50,6 +50,7 @@ export default function AdminPOSPage() {
     deleteCategory,
     restaurantConfig,
     updateWhatsApp,
+    updateDeliveryPrice,
     addSocial,
     removeSocial,
     isAdmin,
@@ -159,6 +160,17 @@ export default function AdminPOSPage() {
     setToastMessage({ message, type });
     setTimeout(() => setToastMessage(null), 3500);
   };
+
+  // ── Configuración de Domicilio y WhatsApp ─────────────────────
+  const [deliveryPriceInput, setDeliveryPriceInput] = useState(() => {
+    return String(restaurantConfig?.deliveryPrice !== undefined ? restaurantConfig.deliveryPrice : 4000);
+  });
+
+  useEffect(() => {
+    if (restaurantConfig?.deliveryPrice !== undefined) {
+      setDeliveryPriceInput(String(restaurantConfig.deliveryPrice));
+    }
+  }, [restaurantConfig?.deliveryPrice]);
 
   // ── Funciones de Respaldo Maestro en PDF y Vaciado de Panel a CERO ──
   const getCustomerFeedbacks = () => {
@@ -5022,7 +5034,7 @@ export default function AdminPOSPage() {
                   </button>
                 </div>
 
-                <div className="d-flex flex-wrap align-items-center justify-content-between gap-2 w-100 mb-3">
+                <div className="d-flex flex-wrap align-items-center justify-content-between gap-2 w-100 mb-4">
                   <small style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600, textAlign: 'left' }}>
                     💡 Si pones 10 dígitos (ej: <code>3007708616</code>), el sistema agrega automáticamente el código de Colombia (+57).
                   </small>
@@ -5044,6 +5056,62 @@ export default function AdminPOSPage() {
                   >
                     <span>🔗 Probar Enlace</span>
                   </a>
+                </div>
+
+                {/* ── PRECIO DEL DOMICILIO (CONFIGURACIÓN EN LÍNEA SUPABASE) ── */}
+                <div className="w-100 p-3 mb-4 rounded-3 border text-start" style={{ background: 'var(--bg-sub)', borderColor: 'var(--border-main)' }}>
+                  <div className="d-flex align-items-center justify-content-between mb-2">
+                    <span style={{ fontSize: '12.5px', fontWeight: 800, color: 'var(--text-main)' }}>
+                      🚴 Tarifa de Domicilio ($ COP)
+                    </span>
+                    <span className="badge px-2 py-1" style={{ background: '#dbeafe', color: '#1d4ed8', fontSize: '11px', fontWeight: 800 }}>
+                      Actual: {formatPrice(restaurantConfig?.deliveryPrice !== undefined ? restaurantConfig.deliveryPrice : 4000)}
+                    </span>
+                  </div>
+                  <p style={{ color: 'var(--text-muted)', fontSize: '11.5px', marginBottom: '8px' }}>
+                    Este es el recargo que se suma automáticamente al pedido cuando el cliente selecciona <em>"Quiero que me lo traigan a mi casa"</em>. Se guarda directamente en Supabase y se actualiza al instante en la carta web.
+                  </p>
+                  <div className="d-flex gap-2">
+                    <input
+                      type="number"
+                      min="0"
+                      step="500"
+                      className="form-control form-control-sm fw-bold"
+                      value={deliveryPriceInput}
+                      onChange={(e) => setDeliveryPriceInput(e.target.value)}
+                      placeholder="Ej: 4000"
+                      style={{
+                        background: 'var(--input-bg)',
+                        color: 'var(--text-main)',
+                        borderColor: 'var(--border-main)',
+                        borderRadius: '8px',
+                        fontSize: '13.5px',
+                      }}
+                    />
+                    <button
+                      onClick={() => {
+                        const val = parseInt(deliveryPriceInput, 10);
+                        if (isNaN(val) || val < 0) {
+                          showToast('⚠️ Ingresa una tarifa válida mayor o igual a 0', 'error');
+                          return;
+                        }
+                        const saved = updateDeliveryPrice(val);
+                        setDeliveryPriceInput(String(saved));
+                        showToast(`✅ Tarifa de domicilio guardada en Supabase: ${formatPrice(saved)}`, 'success');
+                      }}
+                      className="btn btn-sm text-nowrap fw-bold"
+                      style={{
+                        background: '#d97706',
+                        color: '#ffffff',
+                        border: 'none',
+                        borderRadius: '8px',
+                        fontSize: '12.5px',
+                        padding: '6px 16px',
+                      }}
+                    >
+                      💾 Guardar Tarifa
+                    </button>
+                  </div>
                 </div>
 
                 <div style={{ fontSize: '12.5px', fontWeight: 700, marginBottom: '6px', color: 'var(--text-main)' }}>
