@@ -69,7 +69,7 @@ export default function CajaPage() {
         if (saved?.whatsapp) return saved.whatsapp;
       } catch (e) {}
     }
-    return '573007708816';
+    return '573007708616';
   });
 
   useEffect(() => {
@@ -479,7 +479,7 @@ export default function CajaPage() {
 
     <div class="footer-note">
       ¡GRACIAS POR SU PREFERENCIA!<br>
-      TRONOS PUB & GRILL • TEL: ${restaurantConfig?.whatsapp || '300 770 8816'}<br>
+      TRONOS PUB & GRILL • TEL: ${restaurantConfig?.whatsapp || '300 770 8616'}<br>
       DOCUMENTO DE CONTROL INTERNO POS
     </div>
   </div>
@@ -649,7 +649,7 @@ export default function CajaPage() {
         <div class="brand-crown">👑</div>
         <div class="brand-title">TRONOS</div>
         <div class="brand-sub">PUB & GRILL</div>
-        <div class="brand-contact">Tel / WhatsApp: ${restaurantConfig?.whatsapp || '300 770 8816'}</div>
+        <div class="brand-contact">Tel / WhatsApp: ${restaurantConfig?.whatsapp || '300 770 8616'}</div>
 
         <div class="divider-double">
           <span>*** ${copyTitle} ***</span>
@@ -2126,7 +2126,7 @@ export default function CajaPage() {
                   <span style={{ fontSize: '12px', fontWeight: 700 }}>Actualmente Vinculado:</span>
                 </div>
                 <div style={{ fontSize: '15px', fontWeight: 900, letterSpacing: '0.5px' }}>
-                  +{restaurantConfig?.whatsapp || '573007708816'}
+                  +{restaurantConfig?.whatsapp || '573007708616'}
                 </div>
               </div>
 
@@ -2140,7 +2140,7 @@ export default function CajaPage() {
                   className="form-control text-center fw-bold"
                   value={cajaWhatsAppInput}
                   onChange={(e) => setCajaWhatsAppInput(e.target.value)}
-                  placeholder="Ej: 3007708816 o 573007708816"
+                  placeholder="Ej: 3007708616 o 573007708616"
                   style={{
                     background: '#f8fafc',
                     border: '1px solid #cbd5e1',
@@ -2151,7 +2151,7 @@ export default function CajaPage() {
                   }}
                 />
                 <div className="mt-2" style={{ fontSize: '11px', color: '#64748b', lineHeight: '1.4' }}>
-                  💡 <strong>Nota:</strong> Si ingresas un número de 10 dígitos (ej. <code>3007708816</code>), el sistema le antepone automáticamente el código del país (+57).
+                  💡 <strong>Nota:</strong> Si ingresas un número de 10 dígitos (ej. <code>3007708616</code>), el sistema le antepone automáticamente el código del país (+57).
                 </div>
               </div>
 

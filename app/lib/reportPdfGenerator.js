@@ -320,7 +320,7 @@ export const generateMasterReportHtml = ({
       <div><strong>Fecha de Emisión:</strong><br>${reportDateFormatted}</div>
       <div><strong>Hora Exacta:</strong><br>${reportTimeFormatted}</div>
       <div><strong>Generado Por:</strong><br>${userRole}</div>
-      <div><strong>WhatsApp de Domicilios:</strong><br>+${restaurantConfig?.whatsapp || '573007708816'}</div>
+      <div><strong>WhatsApp de Domicilios:</strong><br>+${restaurantConfig?.whatsapp || '573007708616'}</div>
       <div><strong>Total Comandas Históricas:</strong><br>${totalOrdersCount} órdenes</div>
       <div><strong>Total Facturas Generadas:</strong><br>${totalInvoicedCount} facturas</div>
     </div>
@@ -573,7 +573,7 @@ export const generateMasterReportHtml = ({
       <tbody>
         <tr>
           <td style="width:35%; font-weight:800; background:#f8fafc;">WhatsApp de Recepción de Domicilios</td>
-          <td>+${restaurantConfig?.whatsapp || '573007708816'}</td>
+          <td>+${restaurantConfig?.whatsapp || '573007708616'}</td>
         </tr>
         <tr>
           <td style="font-weight:800; background:#f8fafc;">Redes Sociales Vinculadas</td>

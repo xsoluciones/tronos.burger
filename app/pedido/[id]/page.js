@@ -5,6 +5,8 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { formatPrice } from '@/app/data/menuData';
 
+import { supabase } from '@/app/lib/supabaseClient';
+
 // Clave de almacenamiento exclusiva para opiniones de clientes
 export const STORAGE_KEY_CUSTOMER_FEEDBACK = 'tronos_customer_feedback';
 
@@ -21,7 +23,7 @@ export default function PedidoTrackingPage({ params }) {
   const [improvements, setImprovements] = useState('');
   const [feedbackSent, setFeedbackSent] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [restaurantWhatsapp, setRestaurantWhatsapp] = useState('573007708816');
+  const [restaurantWhatsapp, setRestaurantWhatsapp] = useState('573007708616');
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -30,18 +32,36 @@ export default function PedidoTrackingPage({ params }) {
       if (cfg?.whatsapp) {
         let clean = String(cfg.whatsapp).replace(/\D/g, '');
         if (clean.length === 10 && clean.startsWith('3')) clean = `57${clean}`;
-        setRestaurantWhatsapp(clean || '573007708816');
+        setRestaurantWhatsapp(clean || '573007708616');
       }
     } catch (e) {}
   }, []);
 
   // ── Cargar Pedidos y Mantener Sincronización en Vivo ───────────────
-  const fetchOrderData = () => {
+  const fetchOrderData = async () => {
     if (typeof window === 'undefined') return;
     try {
+      let combined = [];
+
+      // 1) Intentar cargar desde el servidor (funciona desde cualquier dispositivo/red)
+      try {
+        const res = await fetch('/api/orders');
+        if (res.ok) {
+          const data = await res.json();
+          if (data.orders && Array.isArray(data.orders)) {
+            combined = [...combined, ...data.orders];
+          }
+          if (data.auditOrders && Array.isArray(data.auditOrders)) {
+            combined = [...combined, ...data.auditOrders];
+          }
+        }
+      } catch (e) {
+        // Servidor no disponible, continuar con localStorage
+      }
+
+      // 2) Fallback: cargar desde localStorage (solo funciona en el mismo dispositivo)
       const rawOrders = localStorage.getItem('tronos-orders');
       const rawAudit = localStorage.getItem('tronos-audit-backup');
-      let combined = [];
 
       if (rawOrders) {
         try { combined = [...combined, ...JSON.parse(rawOrders)]; } catch (e) {}
@@ -49,6 +69,29 @@ export default function PedidoTrackingPage({ params }) {
       if (rawAudit) {
         try { combined = [...combined, ...JSON.parse(rawAudit)]; } catch (e) {}
       }
+
+      // 3) Intentar traer de Supabase (si está configurado)
+      try {
+        const { data } = await supabase
+          .from('app_state')
+          .select('*')
+          .eq('id', 'tronos')
+          .single();
+
+        if (data) {
+          const remoteOrders = data.orders_data || data.config_data?.orders_data;
+          const remoteAudit = data.audit_orders_data || data.config_data?.audit_orders_data;
+
+          if (remoteOrders) {
+            const parsed = typeof remoteOrders === 'string' ? JSON.parse(remoteOrders) : remoteOrders;
+            if (Array.isArray(parsed)) combined = [...combined, ...parsed];
+          }
+          if (remoteAudit) {
+            const parsed = typeof remoteAudit === 'string' ? JSON.parse(remoteAudit) : remoteAudit;
+            if (Array.isArray(parsed)) combined = [...combined, ...parsed];
+          }
+        }
+      } catch (e) {}
 
       // Eliminar duplicados priorizando el estado más reciente
       const map = new Map();

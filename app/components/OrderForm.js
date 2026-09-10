@@ -7,6 +7,7 @@ import { formatPrice } from '@/app/data/menuData';
 export default function OrderForm({ onClose }) {
   const { cart, cartTotal, clearCart, restaurantConfig, addOrder } = useMenu();
 
+  const [orderType, setOrderType] = useState('domicilio'); // 'domicilio' | 'recoger'
   const [form, setForm] = useState({
     nombre: '',
     telefono: '',
@@ -29,8 +30,10 @@ export default function OrderForm({ onClose }) {
     const newErrors = {};
     if (!form.nombre.trim()) newErrors.nombre = true;
     if (!form.telefono.trim()) newErrors.telefono = true;
-    if (!form.direccion.trim()) newErrors.direccion = true;
-    if (!form.descripcion.trim()) newErrors.descripcion = true;
+    if (orderType === 'domicilio') {
+      if (!form.direccion.trim()) newErrors.direccion = true;
+      if (!form.descripcion.trim()) newErrors.descripcion = true;
+    }
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -46,9 +49,15 @@ export default function OrderForm({ onClose }) {
     const origin = typeof window !== 'undefined' ? window.location.origin : 'https://tronospub.com';
     const trackingUrl = `${origin}/pedido/${orderId}`;
 
+    const deliveryHeader = orderType === 'domicilio'
+      ? '🚴 *TIPO:* Quiero que me lo traigan a mi casa (Domicilio)'
+      : '🏪 *TIPO:* Yo lo voy a buscar (Recoger en local)';
+
     // Build WhatsApp message con enlace de seguimiento y manita
     const lines = [
       `🏰 *NUEVO PEDIDO #${orderId} - TRONOS PUB & GRILL* 🏰`,
+      '',
+      deliveryHeader,
       '',
       '📋 *Detalle del pedido:*',
       ...cart.flatMap((item) => {
@@ -71,20 +80,20 @@ export default function OrderForm({ onClose }) {
       `💰 *Total: ${formatPrice(cartTotal)}*`,
       '',
       '👤 *Datos del cliente:*',
-      `• Nombre: ${form.nombre}`,
-      `• Teléfono: ${form.telefono}`,
-      `• Dirección: ${form.direccion}`,
-      `• Referencia: ${form.descripcion}`,
+      `• Nombre: ${form.nombre.trim()}`,
+      `• Teléfono: ${form.telefono.trim()}`,
+      `• Dirección: ${orderType === 'domicilio' ? form.direccion.trim() : '🏪 Recoge en local (Yo lo voy a buscar)'}`,
+      orderType === 'domicilio' ? `• Referencia: ${form.descripcion.trim()}` : '• Entrega: Yo lo voy a buscar',
       '',
       '👉 *Toca aquí para ver el seguimiento en vivo de tu pedido:*',
       trackingUrl,
     ];
-    const message = lines.join('\n');
+    const message = lines.filter(Boolean).join('\n');
     const encoded = encodeURIComponent(message);
     const rawNumber =
       restaurantConfig?.whatsapp ||
       (typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('tronos-config') || '{}')?.whatsapp : null) ||
-      '573007708816';
+      '573007708616';
     const whatsappNumber = cleanWhatsAppNumber(rawNumber);
     const url = `https://wa.me/${whatsappNumber}?text=${encoded}`;
 
@@ -95,11 +104,12 @@ export default function OrderForm({ onClose }) {
       addOrder({
         id: orderId,
         date: new Date().toISOString(),
+        orderType: orderType,
         customer: {
           nombre: form.nombre.trim(),
           telefono: form.telefono.trim(),
-          direccion: form.direccion.trim(),
-          descripcion: form.descripcion.trim(),
+          direccion: orderType === 'domicilio' ? form.direccion.trim() : '🏪 Recoge en local (Yo lo voy a buscar)',
+          descripcion: orderType === 'domicilio' ? form.descripcion.trim() : 'Yo lo voy a buscar',
         },
         items: JSON.parse(JSON.stringify(cart)),
         total: cartTotal,
@@ -181,7 +191,7 @@ export default function OrderForm({ onClose }) {
             <>
               {/* Header */}
               <div style={styles.header}>
-                <h2 style={styles.title}>Datos de Entrega 🏠</h2>
+                <h2 style={styles.title}>Datos de Entrega 🍔</h2>
                 <button
                   onClick={onClose}
                   style={styles.closeBtn}
@@ -192,6 +202,60 @@ export default function OrderForm({ onClose }) {
               </div>
 
               <form onSubmit={handleSubmit} style={styles.form}>
+                {/* Opción Domicilio vs Recoger */}
+                <div style={styles.fieldGroup}>
+                  <label style={styles.label}>¿Cómo deseas recibir tu pedido?</label>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                    <button
+                      type="button"
+                      onClick={() => setOrderType('domicilio')}
+                      style={{
+                        padding: '12px 10px',
+                        borderRadius: '10px',
+                        border: orderType === 'domicilio' ? '2px solid #d4a843' : '1px solid #333',
+                        background: orderType === 'domicilio' ? 'rgba(212, 168, 67, 0.18)' : '#1a1a1a',
+                        color: orderType === 'domicilio' ? '#f0c96b' : '#aaa',
+                        fontWeight: '700',
+                        fontSize: '0.82rem',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        gap: '6px',
+                        textAlign: 'center',
+                        transition: 'all 0.2s ease',
+                      }}
+                    >
+                      <span style={{ fontSize: '22px' }}>🚴</span>
+                      <span>Quiero que me lo traigan a mi casa</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setOrderType('recoger')}
+                      style={{
+                        padding: '12px 10px',
+                        borderRadius: '10px',
+                        border: orderType === 'recoger' ? '2px solid #d4a843' : '1px solid #333',
+                        background: orderType === 'recoger' ? 'rgba(212, 168, 67, 0.18)' : '#1a1a1a',
+                        color: orderType === 'recoger' ? '#f0c96b' : '#aaa',
+                        fontWeight: '700',
+                        fontSize: '0.82rem',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        gap: '6px',
+                        textAlign: 'center',
+                        transition: 'all 0.2s ease',
+                      }}
+                    >
+                      <span style={{ fontSize: '22px' }}>🏪</span>
+                      <span>Yo lo voy a buscar</span>
+                    </button>
+                  </div>
+                </div>
+
                 {/* Fields */}
                 <div style={styles.fieldGroup}>
                   <label style={styles.label}>Nombre Completo</label>
@@ -223,36 +287,44 @@ export default function OrderForm({ onClose }) {
                   />
                 </div>
 
-                <div style={styles.fieldGroup}>
-                  <label style={styles.label}>Dirección</label>
-                  <input
-                    type="text"
-                    name="direccion"
-                    value={form.direccion}
-                    onChange={handleChange}
-                    placeholder="Calle, número, barrio"
-                    style={{
-                      ...styles.input,
-                      borderColor: errors.direccion ? '#e53e3e' : '#333',
-                    }}
-                  />
-                </div>
+                {orderType === 'domicilio' ? (
+                  <>
+                    <div style={styles.fieldGroup}>
+                      <label style={styles.label}>Dirección de Entrega</label>
+                      <input
+                        type="text"
+                        name="direccion"
+                        value={form.direccion}
+                        onChange={handleChange}
+                        placeholder="Calle, número, barrio"
+                        style={{
+                          ...styles.input,
+                          borderColor: errors.direccion ? '#e53e3e' : '#333',
+                        }}
+                      />
+                    </div>
 
-                <div style={styles.fieldGroup}>
-                  <label style={styles.label}>Descripción de Ubicación</label>
-                  <textarea
-                    name="descripcion"
-                    value={form.descripcion}
-                    onChange={handleChange}
-                    placeholder="Ej: Al frente de la tienda, casa amarilla con portón negro..."
-                    rows={3}
-                    style={{
-                      ...styles.input,
-                      ...styles.textarea,
-                      borderColor: errors.descripcion ? '#e53e3e' : '#333',
-                    }}
-                  />
-                </div>
+                    <div style={styles.fieldGroup}>
+                      <label style={styles.label}>Descripción de Ubicación</label>
+                      <textarea
+                        name="descripcion"
+                        value={form.descripcion}
+                        onChange={handleChange}
+                        placeholder="Ej: Al frente de la tienda, casa amarilla con portón negro..."
+                        rows={3}
+                        style={{
+                          ...styles.input,
+                          ...styles.textarea,
+                          borderColor: errors.descripcion ? '#e53e3e' : '#333',
+                        }}
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <div className="p-3 rounded-3" style={{ background: 'rgba(212, 168, 67, 0.08)', border: '1px solid rgba(212, 168, 67, 0.25)', color: '#f0c96b', fontSize: '0.82rem', textAlign: 'center' }}>
+                    🏪 <strong>Entrega en Local:</strong> Pasas a recoger tu pedido directamente en nuestro punto físico. ¡Te notificaremos cuando esté listo en cocina!
+                  </div>
+                )}
 
                 {/* Order Summary */}
                 <div style={styles.summary}>

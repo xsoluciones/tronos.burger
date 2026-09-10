@@ -1007,7 +1007,7 @@ export default function AdminPOSPage() {
 
     <div class="footer-note">
       ¡GRACIAS POR PREFERIRNOS!<br>
-      TRONOS PUB & GRILL • TEL: ${restaurantConfig?.whatsapp || '300 770 8816'}<br>
+      TRONOS PUB & GRILL • TEL: ${restaurantConfig?.whatsapp || '300 770 8616'}<br>
       DOCUMENTO DE CONTROL INTERNO POS
     </div>
   </div>
@@ -1146,7 +1146,7 @@ export default function AdminPOSPage() {
         <div class="brand-title">TRONOS</div>
         <div class="brand-sub">PUB & GRILL</div>
         <div class="brand-tag">CARNES • HAMBURGUESAS • PARRILLA GOURMET</div>
-        <div class="brand-contact">Tel / WhatsApp: ${restaurantConfig?.whatsapp || '300 770 8816'}</div>
+        <div class="brand-contact">Tel / WhatsApp: ${restaurantConfig?.whatsapp || '300 770 8616'}</div>
 
         <div class="divider-double">
           <span>*** ${copyTitle} ***</span>
@@ -4978,7 +4978,7 @@ export default function AdminPOSPage() {
                     <span>Actualmente Vinculado:</span>
                   </div>
                   <div className="fw-black" style={{ fontSize: '14px', letterSpacing: '0.5px' }}>
-                    +{restaurantConfig?.whatsapp || '573007708816'}
+                    +{restaurantConfig?.whatsapp || '573007708616'}
                   </div>
                 </div>
 
@@ -4988,7 +4988,7 @@ export default function AdminPOSPage() {
                     className="form-control form-control-sm text-center fw-bold"
                     value={whatsappInput}
                     onChange={(e) => setWhatsappInput(e.target.value)}
-                    placeholder="Ej: 3007708816 o 573007708816"
+                    placeholder="Ej: 3007708616 o 573007708616"
                     style={{
                       background: 'var(--input-bg)',
                       color: 'var(--text-main)',
@@ -5024,7 +5024,7 @@ export default function AdminPOSPage() {
 
                 <div className="d-flex flex-wrap align-items-center justify-content-between gap-2 w-100 mb-3">
                   <small style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600, textAlign: 'left' }}>
-                    💡 Si pones 10 dígitos (ej: <code>3007708816</code>), el sistema agrega automáticamente el código de Colombia (+57).
+                    💡 Si pones 10 dígitos (ej: <code>3007708616</code>), el sistema agrega automáticamente el código de Colombia (+57).
                   </small>
                   <a
                     href={`https://wa.me/${cleanWhatsAppNumber(whatsappInput || restaurantConfig?.whatsapp)}?text=${encodeURIComponent('Hola, este es un mensaje de prueba para verificar la vinculación de WhatsApp en Tronos Pub & Grill.')}`}
@@ -5632,7 +5632,7 @@ export default function AdminPOSPage() {
                   Carnes • Hamburguesas • Parrilla Gourmet
                 </div>
                 <div style={{ fontSize: '8.5px', color: '#555555', marginTop: '2px' }}>
-                  Tel / WhatsApp: {restaurantConfig?.whatsapp || '300 770 8816'}
+                  Tel / WhatsApp: {restaurantConfig?.whatsapp || '300 770 8616'}
                 </div>
               </div>
 
@@ -5754,7 +5754,7 @@ export default function AdminPOSPage() {
                 Carnes • Hamburguesas • Parrilla Gourmet
               </div>
               <div style={{ fontSize: '8.5px', color: '#555555', marginTop: '2px' }}>
-                Tel / WhatsApp: {restaurantConfig?.whatsapp || '300 770 8816'}
+                Tel / WhatsApp: {restaurantConfig?.whatsapp || '300 770 8616'}
               </div>
             </div>
 

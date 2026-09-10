@@ -62,17 +62,17 @@ const defaultDemoOrders = [
 ];
 
 export const cleanWhatsAppNumber = (phone) => {
-  if (!phone) return '573007708816';
+  if (!phone) return '573007708616';
   let cleaned = String(phone).replace(/\D/g, '');
-  // Si el usuario ingresó un celular colombiano de 10 dígitos (ej. 3007708816), anteponer el prefijo 57
+  // Si el usuario ingresó un celular colombiano de 10 dígitos (ej. 3007708616), anteponer el prefijo 57
   if (cleaned.length === 10 && cleaned.startsWith('3')) {
     cleaned = `57${cleaned}`;
   }
-  return cleaned || '573007708816';
+  return cleaned || '573007708616';
 };
 
 const defaultRestaurantConfig = {
-  whatsapp: '573007708816',
+  whatsapp: '573007708616',
   socials: [
     { id: 'soc-1', name: 'Instagram', url: 'https://instagram.com', icon: '📸' }
   ]
@@ -286,6 +286,34 @@ export function MenuProvider({ children }) {
     }
   }, []);
 
+  // ── Sincronizar pedidos con Supabase (Acceso Multi-Computador) ──────
+  const saveOrdersToSupabase = useCallback(async (ordersList, auditList) => {
+    try {
+      const { error } = await supabase
+        .from('app_state')
+        .update({
+          orders_data: ordersList,
+          audit_orders_data: auditList,
+        })
+        .eq('id', 'tronos');
+
+      if (error) {
+        await supabase
+          .from('app_state')
+          .update({
+            config_data: {
+              ...restaurantConfig,
+              orders_data: ordersList,
+              audit_orders_data: auditList,
+            },
+          })
+          .eq('id', 'tronos');
+      }
+    } catch (e) {
+      console.error('Error al guardar pedidos en Supabase:', e);
+    }
+  }, [restaurantConfig]);
+
   const addOrder = useCallback((newOrder) => {
     const orderWithMeta = {
       ...newOrder,
@@ -294,24 +322,28 @@ export function MenuProvider({ children }) {
       auditFlag: 'registrado',
     };
 
+    let nextOrders = [];
+    let nextAudit = [];
+
     setOrders((prev) => {
-      const updated = [orderWithMeta, ...prev];
+      nextOrders = [orderWithMeta, ...prev];
       if (typeof window !== 'undefined') {
         try {
-          localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(updated));
+          localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(nextOrders));
         } catch (e) {}
       }
-      return updated;
+      return nextOrders;
     });
 
     setAuditOrders((prev) => {
-      const updated = [orderWithMeta, ...prev.filter((o) => o.id !== orderWithMeta.id)];
+      nextAudit = [orderWithMeta, ...prev.filter((o) => o.id !== orderWithMeta.id)];
       if (typeof window !== 'undefined') {
         try {
-          localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(updated));
+          localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(nextAudit));
         } catch (e) {}
       }
-      return updated;
+      saveOrdersToSupabase(nextOrders, nextAudit);
+      return nextAudit;
     });
 
     if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
@@ -321,35 +353,48 @@ export function MenuProvider({ children }) {
         channel.close();
       } catch (e) {}
     }
-  }, []);
+
+    // ── Enviar al servidor para sincronización multi-dispositivo ──
+    if (typeof window !== 'undefined') {
+      fetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ order: orderWithMeta }),
+      }).catch((e) => console.error('[MenuContext] Error enviando pedido al servidor:', e));
+    }
+  }, [saveOrdersToSupabase]);
 
   const updateOrderStatus = useCallback((orderId, status, extraMeta = {}) => {
+    let nextOrders = [];
+    let nextAudit = [];
+
     setOrders((prev) => {
-      const updated = prev.map((o) =>
+      nextOrders = prev.map((o) =>
         o.id === orderId
           ? { ...o, ...(status ? { status } : {}), ...extraMeta, updatedAt: new Date().toISOString() }
           : o
       );
       if (typeof window !== 'undefined') {
         try {
-          localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(updated));
+          localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(nextOrders));
         } catch (e) {}
       }
-      return updated;
+      return nextOrders;
     });
 
     setAuditOrders((prev) => {
-      const updated = prev.map((o) =>
+      nextAudit = prev.map((o) =>
         o.id === orderId
           ? { ...o, ...(status ? { status } : {}), ...extraMeta, updatedAt: new Date().toISOString() }
           : o
       );
       if (typeof window !== 'undefined') {
         try {
-          localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(updated));
+          localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(nextAudit));
         } catch (e) {}
       }
-      return updated;
+      saveOrdersToSupabase(nextOrders, nextAudit);
+      return nextAudit;
     });
 
     if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
@@ -359,7 +404,16 @@ export function MenuProvider({ children }) {
         channel.close();
       } catch (e) {}
     }
-  }, []);
+
+    // ── Enviar al servidor para sincronización multi-dispositivo ──
+    if (typeof window !== 'undefined') {
+      fetch('/api/orders', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId, status, extraMeta }),
+      }).catch((e) => console.error('[MenuContext] Error actualizando pedido en servidor:', e));
+    }
+  }, [saveOrdersToSupabase]);
 
   const markOrderInvoiced = useCallback((orderId, invoiceDetails = {}) => {
     updateOrderStatus(orderId, undefined, {
@@ -371,18 +425,21 @@ export function MenuProvider({ children }) {
 
   // Solo Administrador puede anular o eliminar
   const deleteOrder = useCallback((orderId, motivo = 'Anulado por Administrador') => {
+    let nextOrders = [];
+    let nextAudit = [];
+
     setOrders((prev) => {
-      const updated = prev.filter((o) => o.id !== orderId);
+      nextOrders = prev.filter((o) => o.id !== orderId);
       if (typeof window !== 'undefined') {
         try {
-          localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(updated));
+          localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(nextOrders));
         } catch (e) {}
       }
-      return updated;
+      return nextOrders;
     });
 
     setAuditOrders((prev) => {
-      const updated = prev.map((o) =>
+      nextAudit = prev.map((o) =>
         o.id === orderId
           ? {
               ...o,
@@ -394,12 +451,22 @@ export function MenuProvider({ children }) {
       );
       if (typeof window !== 'undefined') {
         try {
-          localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(updated));
+          localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(nextAudit));
         } catch (e) {}
       }
-      return updated;
+      saveOrdersToSupabase(nextOrders, nextAudit);
+      return nextAudit;
     });
-  }, []);
+
+    // ── Enviar al servidor para sincronización multi-dispositivo ──
+    if (typeof window !== 'undefined') {
+      fetch('/api/orders', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'delete', orderId, motivo }),
+      }).catch((e) => console.error('[MenuContext] Error eliminando pedido en servidor:', e));
+    }
+  }, [saveOrdersToSupabase]);
 
   // Purga física de auditoría (solo Admin)
   const purgeAuditOrder = useCallback((orderId) => {
@@ -432,7 +499,17 @@ export function MenuProvider({ children }) {
         } catch (e) {}
       }
     }
-  }, []);
+    saveOrdersToSupabase([], []);
+
+    // ── Notificar al servidor ──
+    if (typeof window !== 'undefined') {
+      fetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'reset' }),
+      }).catch(() => {});
+    }
+  }, [saveOrdersToSupabase]);
 
   // ── Cargar datos de Supabase después del montaje (solo cliente) ──
   useEffect(() => {
@@ -495,6 +572,30 @@ export function MenuProvider({ children }) {
               });
             }
           }
+
+          // Parse active orders (Acceso multi-computador)
+          const rawOrders = data.orders_data || data.config_data?.orders_data;
+          if (rawOrders) {
+            const parsedOrders = typeof rawOrders === 'string' ? JSON.parse(rawOrders) : rawOrders;
+            if (Array.isArray(parsedOrders) && parsedOrders.length > 0) {
+              setOrders(parsedOrders);
+              if (typeof window !== 'undefined') {
+                try { localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(parsedOrders)); } catch (e) {}
+              }
+            }
+          }
+
+          // Parse audit orders (Acceso multi-computador)
+          const rawAudit = data.audit_orders_data || data.config_data?.audit_orders_data;
+          if (rawAudit) {
+            const parsedAudit = typeof rawAudit === 'string' ? JSON.parse(rawAudit) : rawAudit;
+            if (Array.isArray(parsedAudit) && parsedAudit.length > 0) {
+              setAuditOrders(parsedAudit);
+              if (typeof window !== 'undefined') {
+                try { localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(parsedAudit)); } catch (e) {}
+              }
+            }
+          }
         }
       } catch (err) {
         // Fallback manteniendo el menú local
@@ -504,6 +605,21 @@ export function MenuProvider({ children }) {
     };
 
     loadFromSupabase();
+
+    // Polling periódico cada 5 segundos y Realtime para sincronizar todos los computadores
+    const pollInterval = setInterval(() => {
+      loadFromSupabase();
+    }, 5000);
+
+    let channel = null;
+    try {
+      channel = supabase
+        .channel('app_state_realtime_orders')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'app_state', filter: 'id=eq.tronos' }, () => {
+          loadFromSupabase();
+        })
+        .subscribe();
+    } catch (e) {}
 
     // Load auth from localStorage since it's user-specific and shouldn't be in the DB
     try {
@@ -516,6 +632,180 @@ export function MenuProvider({ children }) {
     } catch {
       // Ignorar errores
     }
+
+    return () => {
+      clearInterval(pollInterval);
+      if (channel) supabase.removeChannel(channel);
+    };
+  }, []);
+
+  // ── Sincronización Multi-Dispositivo via API del Servidor + SSE ────
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    let eventSource = null;
+    let reconnectTimeout = null;
+    let isMounted = true;
+
+    // Cargar pedidos iniciales desde el servidor y sincronizar localStorage → servidor
+    const initSync = async () => {
+      try {
+        // 1) Cargar lo que tenga el servidor
+        const res = await fetch('/api/orders');
+        if (res.ok) {
+          const data = await res.json();
+          if (data.orders && Array.isArray(data.orders) && data.orders.length > 0) {
+            setOrders((prev) => {
+              // Merge: servidor + local sin duplicados (servidor tiene prioridad si tiene updatedAt más reciente)
+              const merged = new Map();
+              prev.forEach(o => merged.set(o.id, o));
+              data.orders.forEach(o => {
+                const existing = merged.get(o.id);
+                if (!existing || (o.updatedAt && o.updatedAt > (existing.updatedAt || ''))) {
+                  merged.set(o.id, o);
+                }
+              });
+              const result = Array.from(merged.values());
+              try { localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(result)); } catch (e) {}
+              return result;
+            });
+          }
+          if (data.auditOrders && Array.isArray(data.auditOrders) && data.auditOrders.length > 0) {
+            setAuditOrders((prev) => {
+              const merged = new Map();
+              prev.forEach(o => merged.set(o.id, o));
+              data.auditOrders.forEach(o => {
+                const existing = merged.get(o.id);
+                if (!existing || (o.updatedAt && o.updatedAt > (existing.updatedAt || ''))) {
+                  merged.set(o.id, o);
+                }
+              });
+              const result = Array.from(merged.values());
+              try { localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(result)); } catch (e) {}
+              return result;
+            });
+          }
+        }
+
+        // 2) Enviar pedidos locales al servidor (por si el servidor acaba de reiniciar)
+        const localOrders = JSON.parse(localStorage.getItem(STORAGE_KEY_ORDERS) || '[]');
+        const localAudit = JSON.parse(localStorage.getItem(STORAGE_KEY_AUDIT_ORDERS) || '[]');
+        if (localOrders.length > 0 || localAudit.length > 0) {
+          fetch('/api/orders', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'bulk_sync', orders: localOrders, auditOrders: localAudit }),
+          }).catch(() => {});
+        }
+      } catch (e) {
+        console.error('[MenuContext] Error en sincronización inicial con servidor:', e);
+      }
+    };
+
+    // Conectar al stream SSE para recibir eventos en tiempo real
+    const connectSSE = () => {
+      if (!isMounted) return;
+      try {
+        eventSource = new EventSource('/api/orders/stream');
+
+        eventSource.addEventListener('NEW_ORDER', (e) => {
+          try {
+            const order = JSON.parse(e.data);
+            setOrders((prev) => {
+              if (prev.some(o => o.id === order.id)) return prev;
+              const next = [order, ...prev];
+              try { localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(next)); } catch (err) {}
+              return next;
+            });
+            setAuditOrders((prev) => {
+              const next = [order, ...prev.filter(o => o.id !== order.id)];
+              try { localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(next)); } catch (err) {}
+              return next;
+            });
+            // También notificar via BroadcastChannel (para otras pestañas locales)
+            if ('BroadcastChannel' in window) {
+              try {
+                const ch = new BroadcastChannel('tronos_orders_channel');
+                ch.postMessage({ type: 'NEW_ORDER_ALERT', order });
+                ch.close();
+              } catch (err) {}
+            }
+          } catch (err) {}
+        });
+
+        eventSource.addEventListener('ORDER_UPDATED', (e) => {
+          try {
+            const { orderId, status, extraMeta, order } = JSON.parse(e.data);
+            const updateFn = (o) =>
+              o.id === orderId
+                ? { ...o, ...(status ? { status } : {}), ...(extraMeta || {}), updatedAt: new Date().toISOString() }
+                : o;
+            setOrders((prev) => {
+              const next = prev.map(updateFn);
+              try { localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(next)); } catch (err) {}
+              return next;
+            });
+            setAuditOrders((prev) => {
+              const next = prev.map(updateFn);
+              try { localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(next)); } catch (err) {}
+              return next;
+            });
+          } catch (err) {}
+        });
+
+        eventSource.addEventListener('ORDER_DELETED', (e) => {
+          try {
+            const { orderId, motivo } = JSON.parse(e.data);
+            setOrders((prev) => {
+              const next = prev.filter(o => o.id !== orderId);
+              try { localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(next)); } catch (err) {}
+              return next;
+            });
+            setAuditOrders((prev) => {
+              const next = prev.map(o =>
+                o.id === orderId
+                  ? { ...o, status: 'anulado_admin', anuladoAt: new Date().toISOString(), anuladoMotivo: motivo }
+                  : o
+              );
+              try { localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(next)); } catch (err) {}
+              return next;
+            });
+          } catch (err) {}
+        });
+
+        eventSource.addEventListener('ORDERS_RESET', () => {
+          setOrders([]);
+          setAuditOrders([]);
+          try {
+            localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify([]));
+            localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify([]));
+          } catch (err) {}
+        });
+
+        eventSource.onerror = () => {
+          if (eventSource) eventSource.close();
+          eventSource = null;
+          // Reconectar después de 3 segundos
+          if (isMounted) {
+            reconnectTimeout = setTimeout(connectSSE, 3000);
+          }
+        };
+      } catch (e) {
+        // Reconectar después de 3 segundos
+        if (isMounted) {
+          reconnectTimeout = setTimeout(connectSSE, 3000);
+        }
+      }
+    };
+
+    initSync();
+    connectSSE();
+
+    return () => {
+      isMounted = false;
+      if (eventSource) eventSource.close();
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
+    };
   }, []);
 
   // ── Sincronizar menú con Supabase ────────────────────────────────
