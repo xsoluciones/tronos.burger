@@ -66,51 +66,92 @@ export default function Footer() {
 
           {/* Redes Sociales Dinámicas */}
           <div className="col-md-4 text-center mb-4 mb-md-0 d-flex justify-content-center flex-wrap gap-2">
-            {socials.map((social) => (
-              <a
-                key={social.id}
-                href={social.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  padding: '6px 16px',
-                  background: 'rgba(0, 0, 0, 0.65)',
-                  border: '1px solid rgba(255, 255, 255, 0.15)',
-                  borderRadius: '50px',
-                  textDecoration: 'none',
-                  transition: 'all 0.3s ease',
-                  backdropFilter: 'blur(10px)',
-                  boxShadow: '0 4px 15px rgba(0, 0, 0, 0.3)',
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = 'rgba(255, 255, 255, 0.15)';
-                  e.currentTarget.style.transform = 'scale(1.05)';
-                  e.currentTarget.style.borderColor = 'rgba(212, 168, 67, 0.5)';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = 'rgba(0, 0, 0, 0.65)';
-                  e.currentTarget.style.transform = 'scale(1)';
-                  e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.15)';
-                }}
-              >
-                {social.image ? (
-                  <img src={social.image} alt={social.name} width={24} height={24} style={{ borderRadius: '4px', objectFit: 'cover' }} />
-                ) : social.icon ? (
-                  <span style={{ fontSize: '1.2rem' }}>{social.icon}</span>
-                ) : null}
-                <span style={{ 
-                  color: '#ffffff',
-                  fontWeight: '600', 
-                  fontSize: '0.85rem',
-                  letterSpacing: '0.5px',
-                }}>
-                  {social.name}
-                </span>
-              </a>
-            ))}
+            {socials.map((social) => {
+              const isInstagram = social.name?.toLowerCase().includes('instagram');
+              return (
+                <a
+                  key={social.id}
+                  href={social.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '9px',
+                    padding: isInstagram ? '6px 18px 6px 10px' : '6px 16px',
+                    background: isInstagram ? 'rgba(20, 10, 15, 0.75)' : 'rgba(0, 0, 0, 0.65)',
+                    border: isInstagram ? '1.5px solid #e1306c' : '1px solid rgba(255, 255, 255, 0.15)',
+                    borderRadius: '50px',
+                    textDecoration: 'none',
+                    transition: 'all 0.3s ease',
+                    backdropFilter: 'blur(10px)',
+                    boxShadow: isInstagram
+                      ? '0 4px 18px rgba(225, 48, 108, 0.35)'
+                      : '0 4px 15px rgba(0, 0, 0, 0.3)',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = isInstagram ? 'rgba(225, 48, 108, 0.2)' : 'rgba(255, 255, 255, 0.15)';
+                    e.currentTarget.style.transform = 'scale(1.05)';
+                    e.currentTarget.style.borderColor = isInstagram ? '#f43f5e' : 'rgba(212, 168, 67, 0.5)';
+                    if (isInstagram) {
+                      e.currentTarget.style.boxShadow = '0 6px 22px rgba(225, 48, 108, 0.55)';
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = isInstagram ? 'rgba(20, 10, 15, 0.75)' : 'rgba(0, 0, 0, 0.65)';
+                    e.currentTarget.style.transform = 'scale(1)';
+                    e.currentTarget.style.borderColor = isInstagram ? '#e1306c' : 'rgba(255, 255, 255, 0.15)';
+                    if (isInstagram) {
+                      e.currentTarget.style.boxShadow = '0 4px 18px rgba(225, 48, 108, 0.35)';
+                    }
+                  }}
+                >
+                  {isInstagram ? (
+                    <span
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        width: '26px',
+                        height: '26px',
+                        borderRadius: '7px',
+                        background: 'linear-gradient(45deg, #f09433 0%, #e6683c 25%, #dc2743 50%, #cc2366 75%, #bc1888 100%)',
+                        boxShadow: '0 2px 8px rgba(225, 48, 108, 0.4)',
+                        flexShrink: 0,
+                      }}
+                    >
+                      <svg
+                        width="15"
+                        height="15"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="#ffffff"
+                        strokeWidth="2.3"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        style={{ display: 'block' }}
+                      >
+                        <rect x="2" y="2" width="20" height="20" rx="5" ry="5"></rect>
+                        <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"></path>
+                        <line x1="17.5" y1="6.5" x2="17.51" y2="6.5"></line>
+                      </svg>
+                    </span>
+                  ) : social.image ? (
+                    <img src={social.image} alt={social.name} width={24} height={24} style={{ borderRadius: '4px', objectFit: 'cover' }} />
+                  ) : social.icon ? (
+                    <span style={{ fontSize: '1.2rem' }}>{social.icon}</span>
+                  ) : null}
+                  <span style={{ 
+                    color: '#ffffff',
+                    fontWeight: '600', 
+                    fontSize: '0.85rem',
+                    letterSpacing: '0.5px',
+                  }}>
+                    {social.name}
+                  </span>
+                </a>
+              );
+            })}
           </div>
 
           {/* Slogan y Acceso Admin */}
@@ -118,9 +159,11 @@ export default function Footer() {
             <p style={{ color: '#ccc', fontSize: '0.85rem', marginBottom: '0.5rem', fontWeight: '500' }}>
               Sabor de Reyes, Experiencias Únicas 🔥
             </p>
-            <Link href="/admin" className="footer-admin-link">
-              🔐 Panel Admin
-            </Link>
+            <div className="d-flex justify-content-center justify-content-md-end">
+              <Link href="/admin" className="footer-admin-link">
+                🔐 Acceso al Sistema POS
+              </Link>
+            </div>
           </div>
         </div>
 

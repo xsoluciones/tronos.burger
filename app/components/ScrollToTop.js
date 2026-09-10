@@ -1,11 +1,18 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { usePathname } from 'next/navigation';
 
 export default function ScrollToTop() {
+  const pathname = usePathname();
   const [isVisible, setIsVisible] = useState(false);
 
   useEffect(() => {
+    if (pathname?.startsWith('/admin')) {
+      setIsVisible(false);
+      return;
+    }
+
     const toggleVisibility = () => {
       // Calculamos la mitad del total de la página scrollable
       const scrollableHeight = document.documentElement.scrollHeight - window.innerHeight;
@@ -24,7 +31,7 @@ export default function ScrollToTop() {
     toggleVisibility();
 
     return () => window.removeEventListener('scroll', toggleVisibility);
-  }, []);
+  }, [pathname]);
 
   const scrollToTop = () => {
     window.scrollTo({
@@ -33,7 +40,7 @@ export default function ScrollToTop() {
     });
   };
 
-  if (!isVisible) return null;
+  if (pathname?.startsWith('/admin') || !isVisible) return null;
 
   return (
     <button

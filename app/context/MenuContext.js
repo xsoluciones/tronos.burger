@@ -8,11 +8,21 @@ const MenuContext = createContext(undefined);
 
 const STORAGE_KEY_MENU = 'tronos-menu';
 const STORAGE_KEY_AUTH = 'tronos-admin-auth';
+const STORAGE_KEY_AUTH_ROLE = 'tronos-auth-role';
 const STORAGE_KEY_CONFIG = 'tronos-config';
 const STORAGE_KEY_ORDERS = 'tronos-orders';
+const STORAGE_KEY_AUDIT_ORDERS = 'tronos-audit-backup';
 const STORAGE_KEY_POS_FOLDER = 'tronos-pos-folder-name';
-const ADMIN_USERNAME = 'admin';
-const ADMIN_PASSWORD = 'tronos2024';
+
+const ADMIN_CREDENTIALS = {
+  username: 'admin',
+  password: 'Tronos2027*'
+};
+
+const CAJERO_CREDENTIALS = {
+  username: 'caja',
+  password: 'caja2026+1'
+};
 
 const defaultDemoOrders = [
   {
@@ -45,9 +55,21 @@ const defaultDemoOrders = [
       }
     ],
     total: 61000,
-    status: 'pendiente'
+    status: 'pendiente',
+    invoiced: false,
+    auditFlag: 'registrado'
   }
 ];
+
+export const cleanWhatsAppNumber = (phone) => {
+  if (!phone) return '573007708816';
+  let cleaned = String(phone).replace(/\D/g, '');
+  // Si el usuario ingresó un celular colombiano de 10 dígitos (ej. 3007708816), anteponer el prefijo 57
+  if (cleaned.length === 10 && cleaned.startsWith('3')) {
+    cleaned = `57${cleaned}`;
+  }
+  return cleaned || '573007708816';
+};
 
 const defaultRestaurantConfig = {
   whatsapp: '573007708816',
@@ -62,22 +84,90 @@ const defaultRestaurantConfig = {
  */
 export function MenuProvider({ children }) {
   // ── Estado del menú (ahora un arreglo de categorías) ─────────────────
-  const [menuCategories, setMenuCategories] = useState(defaultMenuData);
+  const [menuCategories, setMenuCategories] = useState(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem(STORAGE_KEY_MENU);
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            let categories = [...parsed];
+            for (const defCat of defaultMenuData) {
+              const existingCatIdx = categories.findIndex((c) => c.id === defCat.id);
+              if (existingCatIdx === -1) {
+                categories.push(defCat);
+              } else if (defCat.id === 'burgers') {
+                const updatedItems = categories[existingCatIdx].items.map((item) => {
+                  if (!item.extras || item.extras.length === 0) {
+                    const defItem = defCat.items.find((di) => di.id === item.id);
+                    if (defItem?.extras) {
+                      return { ...item, extras: defItem.extras };
+                    }
+                  }
+                  return item;
+                });
+                categories[existingCatIdx] = { ...categories[existingCatIdx], items: updatedItems };
+              }
+            }
+            return categories;
+          }
+        }
+      } catch (e) {}
+    }
+    return defaultMenuData;
+  });
   const [menuLoaded, setMenuLoaded] = useState(false);
+
+  // Guardar categorías de menú en localStorage
+  useEffect(() => {
+    if (typeof window !== 'undefined' && menuCategories?.length > 0) {
+      try {
+        localStorage.setItem(STORAGE_KEY_MENU, JSON.stringify(menuCategories));
+      } catch (e) {}
+    }
+  }, [menuCategories]);
 
   // ── Estado del carrito ───────────────────────────────────────────────
   const [cart, setCart] = useState([]);
 
-  // ── Estado de admin ──────────────────────────────────────────────────
-  const [isAdmin, setIsAdmin] = useState(false);
+  // ── Estado de Roles y Autenticación ──────────────────────────────────
+  const [userRole, setUserRole] = useState(null); // 'admin' | 'cajero' | null
+  const isAdmin = userRole === 'admin';
+  const isCajero = userRole === 'cajero';
 
-  // ── Configuración General ────────────────────────────────────────────
-  const [restaurantConfig, setRestaurantConfig] = useState(defaultRestaurantConfig);
+  // ── Configuración General (Cargada y respaldada en localStorage) ──────
+  const [restaurantConfig, setRestaurantConfig] = useState(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem(STORAGE_KEY_CONFIG);
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (parsed && typeof parsed === 'object') {
+            return {
+              ...defaultRestaurantConfig,
+              ...parsed,
+              whatsapp: cleanWhatsAppNumber(parsed.whatsapp || defaultRestaurantConfig.whatsapp),
+            };
+          }
+        }
+      } catch (e) {}
+    }
+    return defaultRestaurantConfig;
+  });
+
+  // Guardar configuración automáticamente en localStorage ante cualquier cambio
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem(STORAGE_KEY_CONFIG, JSON.stringify(restaurantConfig));
+      } catch (e) {}
+    }
+  }, [restaurantConfig]);
 
   // ── Estado de ver más expandido (mutuamente excluyente) ──────────────
   const [expandedItemId, setExpandedItemId] = useState(null);
 
-  // ── Estado de Pedidos / Comandas POS ─────────────────────────────────
+  // ── Estado de Pedidos / Comandas Activas ─────────────────────────────
   const [orders, setOrders] = useState(() => {
     if (typeof window !== 'undefined') {
       try {
@@ -88,7 +178,18 @@ export function MenuProvider({ children }) {
     return defaultDemoOrders;
   });
 
-  // Guardar pedidos en localStorage
+  // ── Estado de Auditoría Central / Respaldo Maestro ───────────────────
+  const [auditOrders, setAuditOrders] = useState(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem(STORAGE_KEY_AUDIT_ORDERS);
+        if (saved) return JSON.parse(saved);
+      } catch (e) {}
+    }
+    return defaultDemoOrders;
+  });
+
+  // Guardar pedidos activos en localStorage
   useEffect(() => {
     if (typeof window !== 'undefined') {
       try {
@@ -96,6 +197,75 @@ export function MenuProvider({ children }) {
       } catch (e) {}
     }
   }, [orders]);
+
+  // Guardar pedidos de auditoría en localStorage
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(auditOrders));
+      } catch (e) {}
+    }
+  }, [auditOrders]);
+
+  // ── Sincronización en Tiempo Real entre Pestañas ────────────────────
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const handleStorageChange = (e) => {
+      if (e.key === STORAGE_KEY_ORDERS && e.newValue) {
+        try {
+          setOrders(JSON.parse(e.newValue));
+        } catch (err) {}
+      }
+      if (e.key === STORAGE_KEY_AUDIT_ORDERS && e.newValue) {
+        try {
+          setAuditOrders(JSON.parse(e.newValue));
+        } catch (err) {}
+      }
+      if (e.key === STORAGE_KEY_CONFIG && e.newValue) {
+        try {
+          const parsed = JSON.parse(e.newValue);
+          if (parsed && typeof parsed === 'object') {
+            setRestaurantConfig(prev => ({
+              ...prev,
+              ...parsed,
+              whatsapp: cleanWhatsAppNumber(parsed.whatsapp || prev.whatsapp),
+            }));
+          }
+        } catch (err) {}
+      }
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+
+    let channel = null;
+    if ('BroadcastChannel' in window) {
+      try {
+        channel = new BroadcastChannel('tronos_orders_channel');
+        channel.onmessage = (event) => {
+          const { type, data } = event.data || {};
+          if (type === 'SYNC_ORDERS' && Array.isArray(data)) {
+            setOrders(data);
+          }
+          if (type === 'SYNC_AUDIT' && Array.isArray(data)) {
+            setAuditOrders(data);
+          }
+          if (type === 'SYNC_CONFIG' && data) {
+            setRestaurantConfig(prev => ({
+              ...prev,
+              ...data,
+              whatsapp: cleanWhatsAppNumber(data.whatsapp || prev.whatsapp),
+            }));
+          }
+        };
+      } catch (err) {}
+    }
+
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+      if (channel) channel.close();
+    };
+  }, []);
 
   // ── Estado de carpeta de respaldo POS ────────────────────────────────
   const [posBackupFolderName, setPosBackupFolderName] = useState(() => {
@@ -117,17 +287,151 @@ export function MenuProvider({ children }) {
   }, []);
 
   const addOrder = useCallback((newOrder) => {
-    setOrders((prev) => [newOrder, ...prev]);
+    const orderWithMeta = {
+      ...newOrder,
+      createdAt: newOrder.date || new Date().toISOString(),
+      invoiced: false,
+      auditFlag: 'registrado',
+    };
+
+    setOrders((prev) => {
+      const updated = [orderWithMeta, ...prev];
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(updated));
+        } catch (e) {}
+      }
+      return updated;
+    });
+
+    setAuditOrders((prev) => {
+      const updated = [orderWithMeta, ...prev.filter((o) => o.id !== orderWithMeta.id)];
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(updated));
+        } catch (e) {}
+      }
+      return updated;
+    });
+
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      try {
+        const channel = new BroadcastChannel('tronos_orders_channel');
+        channel.postMessage({ type: 'NEW_ORDER_ALERT', order: orderWithMeta });
+        channel.close();
+      } catch (e) {}
+    }
   }, []);
 
-  const updateOrderStatus = useCallback((orderId, status) => {
-    setOrders((prev) =>
-      prev.map((o) => (o.id === orderId ? { ...o, status } : o))
-    );
+  const updateOrderStatus = useCallback((orderId, status, extraMeta = {}) => {
+    setOrders((prev) => {
+      const updated = prev.map((o) =>
+        o.id === orderId
+          ? { ...o, ...(status ? { status } : {}), ...extraMeta, updatedAt: new Date().toISOString() }
+          : o
+      );
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(updated));
+        } catch (e) {}
+      }
+      return updated;
+    });
+
+    setAuditOrders((prev) => {
+      const updated = prev.map((o) =>
+        o.id === orderId
+          ? { ...o, ...(status ? { status } : {}), ...extraMeta, updatedAt: new Date().toISOString() }
+          : o
+      );
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(updated));
+        } catch (e) {}
+      }
+      return updated;
+    });
+
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      try {
+        const channel = new BroadcastChannel('tronos_orders_channel');
+        channel.postMessage({ type: 'STATUS_UPDATED', orderId, status });
+        channel.close();
+      } catch (e) {}
+    }
   }, []);
 
-  const deleteOrder = useCallback((orderId) => {
-    setOrders((prev) => prev.filter((o) => o.id !== orderId));
+  const markOrderInvoiced = useCallback((orderId, invoiceDetails = {}) => {
+    updateOrderStatus(orderId, undefined, {
+      invoiced: true,
+      invoicedAt: new Date().toISOString(),
+      ...invoiceDetails,
+    });
+  }, [updateOrderStatus]);
+
+  // Solo Administrador puede anular o eliminar
+  const deleteOrder = useCallback((orderId, motivo = 'Anulado por Administrador') => {
+    setOrders((prev) => {
+      const updated = prev.filter((o) => o.id !== orderId);
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(updated));
+        } catch (e) {}
+      }
+      return updated;
+    });
+
+    setAuditOrders((prev) => {
+      const updated = prev.map((o) =>
+        o.id === orderId
+          ? {
+              ...o,
+              status: 'anulado_admin',
+              anuladoAt: new Date().toISOString(),
+              anuladoMotivo: motivo,
+            }
+          : o
+      );
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(updated));
+        } catch (e) {}
+      }
+      return updated;
+    });
+  }, []);
+
+  // Purga física de auditoría (solo Admin)
+  const purgeAuditOrder = useCallback((orderId) => {
+    setAuditOrders((prev) => {
+      const updated = prev.filter((o) => o.id !== orderId);
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(updated));
+        } catch (e) {}
+      }
+      return updated;
+    });
+  }, []);
+
+  // ── Limpiar y reiniciar todos los datos a cero (borrado completo) ──
+  const resetAllOrdersData = useCallback(() => {
+    setOrders([]);
+    setAuditOrders([]);
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify([]));
+        localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify([]));
+      } catch (e) {}
+      if ('BroadcastChannel' in window) {
+        try {
+          const ch = new BroadcastChannel('tronos_orders_channel');
+          ch.postMessage({ type: 'SYNC_ORDERS', data: [] });
+          ch.postMessage({ type: 'SYNC_AUDIT', data: [] });
+          ch.close();
+        } catch (e) {}
+      }
+    }
   }, []);
 
   // ── Cargar datos de Supabase después del montaje (solo cliente) ──
@@ -151,26 +455,49 @@ export function MenuProvider({ children }) {
             let parsedMenu = data.menu_data;
             if (typeof parsedMenu === 'string') parsedMenu = JSON.parse(parsedMenu);
             
-            if (Array.isArray(parsedMenu) && parsedMenu[0]?.items?.[0]?.extras !== undefined) {
-              setMenuCategories(parsedMenu);
-            } else {
-              setMenuCategories(defaultMenuData);
-            }
+              let categories = [...parsedMenu];
+              for (const defCat of defaultMenuData) {
+                const existingCatIdx = categories.findIndex((c) => c.id === defCat.id);
+                if (existingCatIdx === -1) {
+                  categories.push(defCat);
+                } else if (defCat.id === 'burgers') {
+                  const updatedItems = categories[existingCatIdx].items.map((item) => {
+                    if (!item.extras || item.extras.length === 0) {
+                      const defItem = defCat.items.find((di) => di.id === item.id);
+                      if (defItem?.extras) {
+                        return { ...item, extras: defItem.extras };
+                      }
+                    }
+                    return item;
+                  });
+                  categories[existingCatIdx] = { ...categories[existingCatIdx], items: updatedItems };
+                }
+              }
+              setMenuCategories(categories);
           }
 
           // Parse config data
           if (data.config_data) {
             let parsedConfig = data.config_data;
             if (typeof parsedConfig === 'string') parsedConfig = JSON.parse(parsedConfig);
-            if (parsedConfig.whatsapp) {
-              setRestaurantConfig(parsedConfig);
+            if (parsedConfig && parsedConfig.whatsapp) {
+              setRestaurantConfig((prev) => {
+                const localSaved = typeof window !== 'undefined' ? localStorage.getItem(STORAGE_KEY_CONFIG) : null;
+                if (localSaved) {
+                  try {
+                    const parsedLocal = JSON.parse(localSaved);
+                    if (parsedLocal?.whatsapp) {
+                      return { ...parsedConfig, ...parsedLocal, whatsapp: cleanWhatsAppNumber(parsedLocal.whatsapp) };
+                    }
+                  } catch (e) {}
+                }
+                return { ...prev, ...parsedConfig, whatsapp: cleanWhatsAppNumber(parsedConfig.whatsapp) };
+              });
             }
           }
         }
       } catch (err) {
-        console.error('Error in loadFromSupabase:', err);
-        // Fallback to defaults
-        setMenuCategories(defaultMenuData);
+        // Fallback manteniendo el menú local
       } finally {
         setMenuLoaded(true);
       }
@@ -180,9 +507,11 @@ export function MenuProvider({ children }) {
 
     // Load auth from localStorage since it's user-specific and shouldn't be in the DB
     try {
-      const storedAuth = localStorage.getItem(STORAGE_KEY_AUTH);
-      if (storedAuth === 'true') {
-        setTimeout(() => setIsAdmin(true), 0);
+      const storedRole = localStorage.getItem(STORAGE_KEY_AUTH_ROLE);
+      if (storedRole === 'admin' || storedRole === 'cajero') {
+        setTimeout(() => setUserRole(storedRole), 0);
+      } else if (localStorage.getItem(STORAGE_KEY_AUTH) === 'true') {
+        setTimeout(() => setUserRole('admin'), 0);
       }
     } catch {
       // Ignorar errores
@@ -224,15 +553,21 @@ export function MenuProvider({ children }) {
   // ── Sincronizar autenticación con localStorage ───────────────────────
   useEffect(() => {
     try {
-      if (isAdmin) {
-        localStorage.setItem(STORAGE_KEY_AUTH, 'true');
+      if (userRole) {
+        localStorage.setItem(STORAGE_KEY_AUTH_ROLE, userRole);
+        if (userRole === 'admin') {
+          localStorage.setItem(STORAGE_KEY_AUTH, 'true');
+        } else {
+          localStorage.removeItem(STORAGE_KEY_AUTH);
+        }
       } else {
+        localStorage.removeItem(STORAGE_KEY_AUTH_ROLE);
         localStorage.removeItem(STORAGE_KEY_AUTH);
       }
     } catch {
       // Ignorar
     }
-  }, [isAdmin]);
+  }, [userRole]);
 
   // ── Funciones del carrito ────────────────────────────────────────────
   const addToCart = useCallback((item, selectedExtras = [], removedIngredients = []) => {
@@ -428,7 +763,36 @@ export function MenuProvider({ children }) {
 
   // ── Funciones de Configuración ─────────────────────────────────────────
   const updateWhatsApp = useCallback((phone) => {
-    setRestaurantConfig(prev => ({ ...prev, whatsapp: phone }));
+    const cleaned = cleanWhatsAppNumber(phone);
+    setRestaurantConfig((prev) => {
+      const updated = { ...prev, whatsapp: cleaned };
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem(STORAGE_KEY_CONFIG, JSON.stringify(updated));
+        } catch (e) {}
+      }
+      return updated;
+    });
+
+    // Notificar a todas las pestañas (Carta web de clientes, Caja, Admin)
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      try {
+        const channel = new BroadcastChannel('tronos_orders_channel');
+        channel.postMessage({ type: 'SYNC_CONFIG', data: { whatsapp: cleaned } });
+        channel.close();
+      } catch (e) {}
+    }
+
+    try {
+      supabase
+        .from('app_state')
+        .update({ config_data: { whatsapp: cleaned } })
+        .eq('id', 'tronos')
+        .then(() => {})
+        .catch(() => {});
+    } catch (e) {}
+
+    return cleaned;
   }, []);
 
   const addSocial = useCallback((social) => {
@@ -448,15 +812,26 @@ export function MenuProvider({ children }) {
 
   // ── Funciones de autenticación ───────────────────────────────────────
   const login = useCallback((username, password) => {
-    if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
-      setIsAdmin(true);
-      return true;
+    const cleanUser = (username || '').trim();
+    const cleanPass = (password || '').trim();
+
+    if (cleanUser === ADMIN_CREDENTIALS.username && cleanPass === ADMIN_CREDENTIALS.password) {
+      setUserRole('admin');
+      return 'admin';
+    }
+    if (cleanUser === CAJERO_CREDENTIALS.username && cleanPass === CAJERO_CREDENTIALS.password) {
+      setUserRole('cajero');
+      return 'cajero';
     }
     return false;
   }, []);
 
   const logout = useCallback(() => {
-    setIsAdmin(false);
+    setUserRole(null);
+    try {
+      localStorage.removeItem(STORAGE_KEY_AUTH_ROLE);
+      localStorage.removeItem(STORAGE_KEY_AUTH);
+    } catch {}
   }, []);
 
   // ── Valor del contexto ──────────────────────────────────────────────
@@ -486,13 +861,19 @@ export function MenuProvider({ children }) {
       updateSocial,
       expandedItemId,
       setExpandedItemId,
+      userRole,
       isAdmin,
+      isCajero,
       login,
       logout,
       orders,
+      auditOrders,
       addOrder,
       updateOrderStatus,
+      markOrderInvoiced,
       deleteOrder,
+      purgeAuditOrder,
+      resetAllOrdersData,
       posBackupFolderName,
       updatePosBackupFolderName,
     }),
@@ -520,13 +901,19 @@ export function MenuProvider({ children }) {
       removeSocial,
       updateSocial,
       expandedItemId,
+      userRole,
       isAdmin,
+      isCajero,
       login,
       logout,
       orders,
+      auditOrders,
       addOrder,
       updateOrderStatus,
+      markOrderInvoiced,
       deleteOrder,
+      purgeAuditOrder,
+      resetAllOrdersData,
       posBackupFolderName,
       updatePosBackupFolderName,
     ]

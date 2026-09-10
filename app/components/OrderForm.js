@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { useMenu } from '@/app/context/MenuContext';
+import { useMenu, cleanWhatsAppNumber } from '@/app/context/MenuContext';
 import { formatPrice } from '@/app/data/menuData';
 
 export default function OrderForm({ onClose }) {
@@ -15,6 +15,7 @@ export default function OrderForm({ onClose }) {
   });
   const [errors, setErrors] = useState({});
   const [success, setSuccess] = useState(false);
+  const [orderIdCreated, setOrderIdCreated] = useState('');
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -38,9 +39,16 @@ export default function OrderForm({ onClose }) {
     e.preventDefault();
     if (!validate()) return;
 
-    // Build WhatsApp message
+    // Generar ID único de comanda
+    const orderId = `TRN-${Date.now().toString().slice(-4)}`;
+    setOrderIdCreated(orderId);
+
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'https://tronospub.com';
+    const trackingUrl = `${origin}/pedido/${orderId}`;
+
+    // Build WhatsApp message con enlace de seguimiento y manita
     const lines = [
-      '🏰 *NUEVO PEDIDO - TRONOS PUB & GRILL* 🏰',
+      `🏰 *NUEVO PEDIDO #${orderId} - TRONOS PUB & GRILL* 🏰`,
       '',
       '📋 *Detalle del pedido:*',
       ...cart.flatMap((item) => {
@@ -67,10 +75,17 @@ export default function OrderForm({ onClose }) {
       `• Teléfono: ${form.telefono}`,
       `• Dirección: ${form.direccion}`,
       `• Referencia: ${form.descripcion}`,
+      '',
+      '👉 *Toca aquí para ver el seguimiento en vivo de tu pedido:*',
+      trackingUrl,
     ];
     const message = lines.join('\n');
     const encoded = encodeURIComponent(message);
-    const whatsappNumber = restaurantConfig?.whatsapp || '573007708816';
+    const rawNumber =
+      restaurantConfig?.whatsapp ||
+      (typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('tronos-config') || '{}')?.whatsapp : null) ||
+      '573007708816';
+    const whatsappNumber = cleanWhatsAppNumber(rawNumber);
     const url = `https://wa.me/${whatsappNumber}?text=${encoded}`;
 
     window.open(url, '_blank');
@@ -78,7 +93,7 @@ export default function OrderForm({ onClose }) {
     // Registrar pedido en el sistema POS
     if (addOrder) {
       addOrder({
-        id: `TRN-${Date.now().toString().slice(-4)}`,
+        id: orderId,
         date: new Date().toISOString(),
         customer: {
           nombre: form.nombre.trim(),
@@ -92,14 +107,9 @@ export default function OrderForm({ onClose }) {
       });
     }
 
-    // Clear and show success
+    // Limpiar carrito y mostrar modal con botón de seguimiento
     clearCart();
     setSuccess(true);
-
-    // Auto-close after delay
-    setTimeout(() => {
-      onClose();
-    }, 3000);
   };
 
   return (
@@ -111,13 +121,60 @@ export default function OrderForm({ onClose }) {
       <div style={styles.modalWrapper}>
         <div style={styles.modal}>
           {success ? (
-            /* ── Success State ── */
+            /* ── Success State con Botón Interactivo de Seguimiento ── */
             <div style={styles.successContainer}>
-              <span style={styles.successIcon}>✅</span>
-              <h2 style={styles.successTitle}>¡Pedido enviado exitosamente!</h2>
+              <span style={styles.successIcon}>🍔</span>
+              <h2 style={styles.successTitle}>¡Pedido Enviado con Éxito!</h2>
               <p style={styles.successText}>
-                Recibirás confirmación por WhatsApp pronto.
+                Tu orden <strong style={{ color: '#22c55e' }}>#{orderIdCreated}</strong> fue registrada en caja y cocina.
               </p>
+
+              {/* Botón con la manita indicando tocar para ver seguimiento */}
+              <div style={{ marginTop: '18px', marginBottom: '14px' }}>
+                <a
+                  href={`/pedido/${orderIdCreated}`}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '8px',
+                    background: 'linear-gradient(135deg, #22c55e, #16a34a)',
+                    color: '#ffffff',
+                    fontWeight: 900,
+                    fontSize: '14.5px',
+                    padding: '13px 20px',
+                    borderRadius: '12px',
+                    textDecoration: 'none',
+                    boxShadow: '0 4px 14px rgba(34, 197, 94, 0.4)',
+                    border: '1px solid #86efac',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease',
+                  }}
+                >
+                  <span style={{ fontSize: '20px' }}>👉</span>
+                  <span>Toca aquí para ver el seguimiento de mi pedido</span>
+                </a>
+              </div>
+
+              <p style={{ fontSize: '12px', color: '#94a3b8', margin: '6px 0 16px' }}>
+                También puedes entrar desde el link enviado a tu WhatsApp.
+              </p>
+
+              <button
+                onClick={onClose}
+                style={{
+                  background: 'rgba(255,255,255,0.08)',
+                  color: '#cbd5e1',
+                  border: '1px solid rgba(255,255,255,0.15)',
+                  padding: '7px 18px',
+                  borderRadius: '8px',
+                  fontSize: '12.5px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                Cerrar ventana
+              </button>
             </div>
           ) : (
             /* ── Form State ── */

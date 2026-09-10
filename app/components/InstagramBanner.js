@@ -94,24 +94,24 @@ export default function InstagramBanner() {
                 gap: '12px',
                 padding: '8px 24px 8px 12px',
                 background: 'rgba(0, 0, 0, 0.65)',
-                border: '1px solid rgba(255, 255, 255, 0.15)',
+                border: '1.5px solid #e1306c',
                 borderRadius: '50px',
                 textDecoration: 'none',
                 transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
                 backdropFilter: 'blur(10px)',
-                boxShadow: '0 4px 20px rgba(0, 0, 0, 0.4)',
+                boxShadow: '0 4px 20px rgba(225, 48, 108, 0.35)',
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.15)';
-                e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.3)';
+                e.currentTarget.style.background = 'rgba(225, 48, 108, 0.2)';
+                e.currentTarget.style.borderColor = '#f43f5e';
                 e.currentTarget.style.transform = 'scale(1.05)';
-                e.currentTarget.style.boxShadow = '0 6px 25px rgba(224, 45, 96, 0.3)';
+                e.currentTarget.style.boxShadow = '0 6px 28px rgba(225, 48, 108, 0.6)';
               }}
               onMouseLeave={(e) => {
                 e.currentTarget.style.background = 'rgba(0, 0, 0, 0.65)';
-                e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.15)';
+                e.currentTarget.style.borderColor = '#e1306c';
                 e.currentTarget.style.transform = 'scale(1)';
-                e.currentTarget.style.boxShadow = '0 4px 20px rgba(0, 0, 0, 0.4)';
+                e.currentTarget.style.boxShadow = '0 4px 20px rgba(225, 48, 108, 0.35)';
               }}
             >
               {/* Contenedor del Logo de Instagram con su Degradado Original */}
