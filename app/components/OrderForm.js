@@ -49,8 +49,11 @@ export default function OrderForm({ onClose }) {
     const origin = typeof window !== 'undefined' ? window.location.origin : 'https://tronospub.com';
     const trackingUrl = `${origin}/pedido/${orderId}`;
 
+    const deliveryFee = orderType === 'domicilio' ? 4000 : 0;
+    const finalTotal = cartTotal + deliveryFee;
+
     const deliveryHeader = orderType === 'domicilio'
-      ? '🚴 *TIPO:* Quiero que me lo traigan a mi casa (Domicilio)'
+      ? '🚴 *TIPO:* Quiero que me lo traigan a mi casa (Domicilio +$4.000)'
       : '🏪 *TIPO:* Yo lo voy a buscar (Recoger en local)';
 
     // Build WhatsApp message con enlace de seguimiento y manita
@@ -76,8 +79,9 @@ export default function OrderForm({ onClose }) {
         }
         return [itemLine, ...extraLines];
       }),
+      orderType === 'domicilio' ? `• Domicilio: ${formatPrice(4000)}` : null,
       '',
-      `💰 *Total: ${formatPrice(cartTotal)}*`,
+      `💰 *Total: ${formatPrice(finalTotal)}*`,
       '',
       '👤 *Datos del cliente:*',
       `• Nombre: ${form.nombre.trim()}`,
@@ -105,6 +109,7 @@ export default function OrderForm({ onClose }) {
         id: orderId,
         date: new Date().toISOString(),
         orderType: orderType,
+        deliveryFee: deliveryFee,
         customer: {
           nombre: form.nombre.trim(),
           telefono: form.telefono.trim(),
@@ -112,7 +117,7 @@ export default function OrderForm({ onClose }) {
           descripcion: orderType === 'domicilio' ? form.descripcion.trim() : 'Yo lo voy a buscar',
         },
         items: JSON.parse(JSON.stringify(cart)),
-        total: cartTotal,
+        total: finalTotal,
         status: 'pendiente',
       });
     }
@@ -228,6 +233,16 @@ export default function OrderForm({ onClose }) {
                     >
                       <span style={{ fontSize: '22px' }}>🚴</span>
                       <span>Quiero que me lo traigan a mi casa</span>
+                      <span style={{
+                        fontSize: '0.72rem',
+                        background: orderType === 'domicilio' ? '#d4a843' : '#333',
+                        color: orderType === 'domicilio' ? '#000' : '#888',
+                        padding: '2px 8px',
+                        borderRadius: '12px',
+                        fontWeight: '800'
+                      }}>
+                        + $4.000 domicilio
+                      </span>
                     </button>
 
                     <button
@@ -252,6 +267,16 @@ export default function OrderForm({ onClose }) {
                     >
                       <span style={{ fontSize: '22px' }}>🏪</span>
                       <span>Yo lo voy a buscar</span>
+                      <span style={{
+                        fontSize: '0.72rem',
+                        background: orderType === 'recoger' ? 'rgba(34, 197, 94, 0.2)' : '#333',
+                        color: orderType === 'recoger' ? '#4ade80' : '#888',
+                        padding: '2px 8px',
+                        borderRadius: '12px',
+                        fontWeight: '800'
+                      }}>
+                        Gratis
+                      </span>
                     </button>
                   </div>
                 </div>
@@ -365,9 +390,28 @@ export default function OrderForm({ onClose }) {
                       )}
                     </div>
                   ))}
+                  <div style={{ marginTop: '10px', paddingTop: '8px', borderTop: '1px solid #333' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', color: '#aaa', marginBottom: '4px' }}>
+                      <span>Subtotal productos</span>
+                      <span>{formatPrice(cartTotal)}</span>
+                    </div>
+                    {orderType === 'domicilio' && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', color: '#f0c96b', marginBottom: '4px' }}>
+                        <span>🚴 Domicilio</span>
+                        <span>+{formatPrice(4000)}</span>
+                      </div>
+                    )}
+                    {orderType === 'recoger' && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', color: '#4ade80', marginBottom: '4px' }}>
+                        <span>🏪 Recoger en local</span>
+                        <span>$0</span>
+                      </div>
+                    )}
+                  </div>
+
                   <div style={styles.summaryTotal}>
-                    <span>Total</span>
-                    <span>{formatPrice(cartTotal)}</span>
+                    <span>Total a Pagar</span>
+                    <span>{formatPrice(cartTotal + (orderType === 'domicilio' ? 4000 : 0))}</span>
                   </div>
                 </div>
 
