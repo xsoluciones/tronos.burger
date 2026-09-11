@@ -1643,16 +1643,22 @@ export default function AdminPOSPage() {
       showToast('Por favor completa los campos correctamente.', 'error');
       return;
     }
+    const defaultImg = categoryId === 'burgers' ? '/images/tronos-clasica.png' :
+                       categoryId === 'entradas' ? '/images/papas-francesa.png' :
+                       categoryId === 'bebidas' ? '/images/coca-cola.png' : '/images/tronos-clasica.png';
+    const finalImage = (newItem.image && newItem.image.trim()) ? newItem.image.trim() : defaultImg;
+
     addMenuItem(categoryId, {
-      id: `${newItem.name.toLowerCase().replace(/\s+/g, '-')}-${Date.now()}`,
+      id: `${newItem.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}-${Date.now()}`,
       name: newItem.name.trim(),
       description: newItem.description.trim(),
       detailedDescription: newItem.detailedDescription.trim() || newItem.description.trim(),
       price: parseFloat(newItem.price),
-      image: newItem.image.trim(),
+      image: finalImage,
+      categoryId,
       extras: [],
     });
-    showToast(`"${newItem.name}" añadido.`);
+    showToast(`"${newItem.name}" añadido exitosamente y guardado en Supabase.`);
     setNewItem({ name: '', description: '', detailedDescription: '', price: '', image: '' });
     setAddingToCategoryId(null);
   };
@@ -5003,7 +5009,7 @@ export default function AdminPOSPage() {
                                       onClick={() => {
                                         if (confirm(`¿Eliminar "${item.name}"?`)) {
                                           deleteMenuItem(category.id, item.id);
-                                          showToast('Plato eliminado.');
+                                          showToast('Plato eliminado y actualizado en Supabase.');
                                         }
                                       }}
                                       className="btn btn-sm text-danger d-flex align-items-center"

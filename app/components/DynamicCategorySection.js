@@ -160,11 +160,12 @@ export default function DynamicCategorySection({ category }) {
                   {/* Image Wrapper with Floating Add Button */}
                   <div style={styles.imageWrapper}>
                     <Image
-                      src={item.image}
+                      src={item.image || '/images/tronos-clasica.png'}
                       alt={item.name}
                       width={400}
                       height={250}
                       style={styles.image}
+                      unoptimized={Boolean(item.image?.startsWith('data:'))}
                       sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
                     />
                     <button

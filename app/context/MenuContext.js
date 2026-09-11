@@ -92,25 +92,7 @@ export function MenuProvider({ children }) {
         if (saved) {
           const parsed = JSON.parse(saved);
           if (Array.isArray(parsed) && parsed.length > 0) {
-            let categories = [...parsed];
-            for (const defCat of defaultMenuData) {
-              const existingCatIdx = categories.findIndex((c) => c.id === defCat.id);
-              if (existingCatIdx === -1) {
-                categories.push(defCat);
-              } else if (defCat.id === 'burgers') {
-                const updatedItems = categories[existingCatIdx].items.map((item) => {
-                  if (!item.extras || item.extras.length === 0) {
-                    const defItem = defCat.items.find((di) => di.id === item.id);
-                    if (defItem?.extras) {
-                      return { ...item, extras: defItem.extras };
-                    }
-                  }
-                  return item;
-                });
-                categories[existingCatIdx] = { ...categories[existingCatIdx], items: updatedItems };
-              }
-            }
-            return categories;
+            return parsed;
           }
         }
       } catch (e) {}
@@ -218,6 +200,14 @@ export function MenuProvider({ children }) {
           setOrders(JSON.parse(e.newValue));
         } catch (err) {}
       }
+      if (e.key === STORAGE_KEY_MENU && e.newValue) {
+        try {
+          const parsed = JSON.parse(e.newValue);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setMenuCategories(parsed);
+          }
+        } catch (err) {}
+      }
       if (e.key === STORAGE_KEY_AUDIT_ORDERS && e.newValue) {
         try {
           setAuditOrders(JSON.parse(e.newValue));
@@ -245,6 +235,9 @@ export function MenuProvider({ children }) {
         channel = new BroadcastChannel('tronos_orders_channel');
         channel.onmessage = (event) => {
           const { type, data } = event.data || {};
+          if (type === 'SYNC_MENU' && Array.isArray(data)) {
+            setMenuCategories(data);
+          }
           if (type === 'SYNC_ORDERS' && Array.isArray(data)) {
             setOrders(data);
           }
@@ -703,29 +696,15 @@ export function MenuProvider({ children }) {
           if (data.menu_data) {
             let parsedMenu = data.menu_data;
             if (typeof parsedMenu === 'string') parsedMenu = JSON.parse(parsedMenu);
-            
-            let categories = [...parsedMenu];
-            for (const defCat of defaultMenuData) {
-              const existingCatIdx = categories.findIndex((c) => c.id === defCat.id);
-              if (existingCatIdx === -1) {
-                categories.push(defCat);
-              } else if (defCat.id === 'burgers') {
-                const updatedItems = categories[existingCatIdx].items.map((item) => {
-                  if (!item.extras || item.extras.length === 0) {
-                    const defItem = defCat.items.find((di) => di.id === item.id);
-                    if (defItem?.extras) {
-                      return { ...item, extras: defItem.extras };
-                    }
-                  }
-                  return item;
-                });
-                categories[existingCatIdx] = { ...categories[existingCatIdx], items: updatedItems };
+            if (Array.isArray(parsedMenu) && parsedMenu.length > 0) {
+              setMenuCategories((prev) => {
+                if (JSON.stringify(prev) === JSON.stringify(parsedMenu)) return prev;
+                return parsedMenu;
+              });
+              if (typeof window !== 'undefined') {
+                try { localStorage.setItem(STORAGE_KEY_MENU, JSON.stringify(parsedMenu)); } catch (e) {}
               }
             }
-            setMenuCategories((prev) => {
-              if (JSON.stringify(prev) === JSON.stringify(categories)) return prev;
-              return categories;
-            });
           }
 
           // Parse config data (solo actualizar si los datos cambiaron)
@@ -982,13 +961,35 @@ export function MenuProvider({ children }) {
 
   // ── Sincronización explícita de menú con Supabase (solo ante cambios manuales) ──
   const saveMenuToSupabase = useCallback(async (categories) => {
+    if (!categories || !Array.isArray(categories)) return false;
     try {
-      await supabase
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem(STORAGE_KEY_MENU, JSON.stringify(categories));
+        } catch (e) {}
+      }
+
+      if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+        try {
+          const channel = new BroadcastChannel('tronos_orders_channel');
+          channel.postMessage({ type: 'SYNC_MENU', data: categories });
+          channel.close();
+        } catch (e) {}
+      }
+
+      const { error } = await supabase
         .from('app_state')
         .update({ menu_data: categories })
         .eq('id', 'tronos');
+
+      if (error) {
+        console.error('Error saving menu to Supabase:', error);
+        return false;
+      }
+      return true;
     } catch (error) {
       console.warn('Error saving menu to Supabase:', error);
+      return false;
     }
   }, []);
 
@@ -1145,7 +1146,12 @@ export function MenuProvider({ children }) {
     setMenuCategories((prev) => {
       const next = prev.map((cat) => {
         if (cat.id === categoryId) {
-          return { ...cat, items: [...cat.items, { ...item, extras: [] }] };
+          const itemToAdd = {
+            ...item,
+            categoryId,
+            extras: Array.isArray(item.extras) ? item.extras : [],
+          };
+          return { ...cat, items: [...cat.items, itemToAdd] };
         }
         return cat;
       });
