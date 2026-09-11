@@ -502,6 +502,96 @@ export function MenuProvider({ children }) {
     });
   }, [updateOrderStatus]);
 
+  // ── Personalizar Pedido (Agregar Adición con Precio Manual en Cocina / Caja) ──
+  const addCustomAdditionToOrder = useCallback((orderId, customAddition, options = {}) => {
+    const { updateInvoice = true } = options;
+    const now = new Date().toISOString();
+    recentLocalUpdatesRef.current.set(orderId, Date.now() + 15000);
+
+    const priceNum = Math.max(0, parseInt(customAddition.price, 10) || 0);
+    const qtyNum = Math.max(1, parseInt(customAddition.quantity, 10) || 1);
+    const newItem = {
+      id: `custom-add-${Date.now()}`,
+      name: (customAddition.name || 'Adición personalizada').trim(),
+      price: priceNum,
+      quantity: qtyNum,
+      note: (customAddition.note || '').trim(),
+      isCustom: true,
+      selectedExtras: [],
+      removedIngredients: [],
+    };
+
+    let updatedOrder = null;
+    let nextOrders = [];
+    let nextAudit = [];
+
+    const applyAddition = (o) => {
+      if (o.id !== orderId) return o;
+      const newItems = [...(o.items || []), newItem];
+      const newSubtotal = newItems.reduce((sum, it) => {
+        const extrasTotal = (it.selectedExtras || []).reduce((s, e) => s + ((e.price || 0) * (e.quantity || 1)), 0);
+        return sum + (((it.price || 0) + extrasTotal) * (it.quantity || 1));
+      }, 0);
+      const deliveryFee = o.deliveryFee || 0;
+      const newTotal = newSubtotal + deliveryFee;
+
+      const mod = {
+        ...o,
+        items: newItems,
+        subtotal: newSubtotal,
+        total: newTotal,
+        updatedAt: now,
+        ...(updateInvoice ? { invoicedAt: now } : {}),
+      };
+      updatedOrder = mod;
+      return mod;
+    };
+
+    setOrders((prev) => {
+      nextOrders = prev.map(applyAddition);
+      if (typeof window !== 'undefined') {
+        try { localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(nextOrders)); } catch (e) {}
+      }
+      return nextOrders;
+    });
+
+    setAuditOrders((prev) => {
+      nextAudit = prev.map(applyAddition);
+      if (typeof window !== 'undefined') {
+        try { localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(nextAudit)); } catch (e) {}
+      }
+      return nextAudit;
+    });
+
+    saveOrdersToSupabase(nextOrders, nextAudit);
+
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      try {
+        const channel = new BroadcastChannel('tronos_orders_channel');
+        channel.postMessage({ type: 'ORDER_CUSTOMIZED', orderId, order: updatedOrder });
+        channel.close();
+      } catch (e) {}
+    }
+
+    if (typeof window !== 'undefined') {
+      fetch('/api/orders', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          orderId,
+          extraMeta: {
+            items: updatedOrder?.items,
+            subtotal: updatedOrder?.subtotal,
+            total: updatedOrder?.total,
+            invoicedAt: updatedOrder?.invoicedAt,
+          },
+        }),
+      }).catch((e) => console.error('[MenuContext] Error enviando actualización personalizada al servidor:', e));
+    }
+
+    return updatedOrder;
+  }, [saveOrdersToSupabase]);
+
   // Solo Administrador puede anular o eliminar
   const deleteOrder = useCallback((orderId, motivo = 'Anulado por Administrador') => {
     recentLocalUpdatesRef.current.set(orderId, Date.now() + 15000);
@@ -1277,6 +1367,7 @@ export function MenuProvider({ children }) {
       addOrder,
       updateOrderStatus,
       markOrderInvoiced,
+      addCustomAdditionToOrder,
       deleteOrder,
       purgeAuditOrder,
       resetAllOrdersData,
@@ -1318,6 +1409,7 @@ export function MenuProvider({ children }) {
       addOrder,
       updateOrderStatus,
       markOrderInvoiced,
+      addCustomAdditionToOrder,
       deleteOrder,
       purgeAuditOrder,
       resetAllOrdersData,

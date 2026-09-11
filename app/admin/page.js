@@ -61,12 +61,20 @@ export default function AdminPOSPage() {
     addOrder,
     updateOrderStatus,
     markOrderInvoiced,
+    addCustomAdditionToOrder,
     deleteOrder,
-    purgeAuditOrder,
     resetAllOrdersData,
     posBackupFolderName,
     updatePosBackupFolderName,
   } = useMenu();
+
+  // ── Estados para Personalizar Pedido (Adición con Precio Manual en Cocina) ──
+  const [customizingOrder, setCustomizingOrder] = useState(null);
+  const [customAddName, setCustomAddName] = useState('');
+  const [customAddPrice, setCustomAddPrice] = useState('');
+  const [customAddQty, setCustomAddQty] = useState(1);
+  const [customAddNote, setCustomAddNote] = useState('');
+  const [isSavingCustomAdd, setIsSavingCustomAdd] = useState(false);
 
   // ── Estados de Borrado de Datos y Reporte PDF ──────────────────────
   const [showResetConfirmModal, setShowResetConfirmModal] = useState(false);
@@ -1548,6 +1556,70 @@ export default function AdminPOSPage() {
     } else {
       updateOrderStatus(order.id, 'en_cocina');
       showToast(`Comanda #${order.id} enviada a Cocina.`);
+    }
+  };
+
+  // ── Métodos para Personalizar Pedido (Agregar Adición con Precio Manual en Cocina) ──
+  const handleOpenCustomizeModal = (order) => {
+    setCustomizingOrder(order);
+    setCustomAddName('');
+    setCustomAddPrice('');
+    setCustomAddQty(1);
+    setCustomAddNote('');
+  };
+
+  const handleSaveCustomAddition = async (reinvoiceAndPrint = false) => {
+    if (!customizingOrder) return;
+    if (!customAddName.trim()) {
+      showToast('Por favor escribe el nombre de la adición.', 'error');
+      return;
+    }
+    const priceNum = parseInt(customAddPrice, 10);
+    if (isNaN(priceNum) || priceNum < 0) {
+      showToast('Por favor ingresa un precio válido ($).', 'error');
+      return;
+    }
+
+    setIsSavingCustomAdd(true);
+    try {
+      const updated = addCustomAdditionToOrder(
+        customizingOrder.id,
+        {
+          name: customAddName.trim(),
+          price: priceNum,
+          quantity: customAddQty || 1,
+          note: customAddNote.trim(),
+        },
+        { updateInvoice: reinvoiceAndPrint || customizingOrder.invoiced }
+      );
+
+      const targetOrder = updated || {
+        ...customizingOrder,
+        items: [
+          ...(customizingOrder.items || []),
+          {
+            name: customAddName.trim(),
+            price: priceNum,
+            quantity: customAddQty || 1,
+            note: customAddNote.trim(),
+          },
+        ],
+        subtotal: (customizingOrder.subtotal || 0) + (priceNum * (customAddQty || 1)),
+        total: (customizingOrder.total || 0) + (priceNum * (customAddQty || 1)),
+      };
+
+      showToast(`Adición "${customAddName.trim()}" agregada a comanda #${customizingOrder.id}.`);
+      setCustomizingOrder(null);
+
+      if (reinvoiceAndPrint) {
+        showToast('🧾 Actualizando factura y reimprimiendo 3 copias...');
+        await handleFacturarTresCopias(targetOrder);
+      }
+    } catch (err) {
+      console.error('Error al personalizar comanda:', err);
+      showToast('Error al agregar adición a la comanda.', 'error');
+    } finally {
+      setIsSavingCustomAdd(false);
     }
   };
 
@@ -3737,6 +3809,21 @@ export default function AdminPOSPage() {
                                     🔒 Facturación e impresión obligatoria
                                   </div>
                                 )}
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenCustomizeModal(order)}
+                                  className="btn w-100 py-1 mb-1 d-flex align-items-center justify-content-center gap-1.5 fw-bold text-center"
+                                  style={{
+                                    background: '#eff6ff',
+                                    color: '#1d4ed8',
+                                    border: '1.5px solid #bfdbfe',
+                                    borderRadius: '6px',
+                                    fontSize: '10.5px',
+                                  }}
+                                  title="Añadir adición personalizada con precio manual"
+                                >
+                                  <span>🛠️ Personalizar Pedido</span>
+                                </button>
                                 <div className="d-flex gap-1.5">
                                   <button
                                     onClick={() => handleEnviarACocina(order)}
@@ -3779,45 +3866,62 @@ export default function AdminPOSPage() {
                             )}
 
                             {isKitchen && (
-                              <div className="d-flex gap-1.5">
+                              <>
                                 <button
-                                  onClick={() => {
-                                    updateOrderStatus(order.id, 'en_camino');
-                                    showToast(`Comanda #${order.id} despachada (En Camino).`);
-                                  }}
-                                  className="btn w-100 py-1 d-flex align-items-center justify-content-center gap-1 fw-bold text-center"
+                                  type="button"
+                                  onClick={() => handleOpenCustomizeModal(order)}
+                                  className="btn w-100 py-1 mb-1 d-flex align-items-center justify-content-center gap-1.5 fw-bold text-center"
                                   style={{
-                                    background: '#22c55e',
-                                    color: '#ffffff',
+                                    background: '#eff6ff',
+                                    color: '#1d4ed8',
+                                    border: '1.5px solid #bfdbfe',
                                     borderRadius: '6px',
-                                    fontSize: '10.5px',
-                                    border: 'none',
+                                    fontSize: '11px',
                                   }}
+                                  title="Añadir adición personalizada con precio manual y actualizar factura"
                                 >
-                                  <IconTransit size={13} />
-                                  <span>🛵 Despachar</span>
+                                  <span>🛠️ Personalizar Pedido</span>
                                 </button>
-                                <button
-                                  onClick={() => {
-                                    if (confirm(`¿Marcar la comanda #${order.id} como devuelta?`)) {
-                                      updateOrderStatus(order.id, 'devuelto');
-                                      showToast(`Comanda #${order.id} marcada como devuelta.`, 'error');
-                                    }
-                                  }}
-                                  className="btn py-1 px-2 fw-bold d-flex align-items-center justify-content-center"
-                                  style={{
-                                    background: '#fee2e2',
-                                    color: '#b91c1c',
-                                    border: '1px solid #fca5a5',
-                                    borderRadius: '6px',
-                                    fontSize: '10px',
-                                    whiteSpace: 'nowrap',
-                                  }}
-                                  title="Marcar Devuelto"
-                                >
-                                  <span>↩️ Devolver</span>
-                                </button>
-                              </div>
+                                <div className="d-flex gap-1.5">
+                                  <button
+                                    onClick={() => {
+                                      updateOrderStatus(order.id, 'en_camino');
+                                      showToast(`Comanda #${order.id} despachada (En Camino).`);
+                                    }}
+                                    className="btn w-100 py-1 d-flex align-items-center justify-content-center gap-1 fw-bold text-center"
+                                    style={{
+                                      background: '#22c55e',
+                                      color: '#ffffff',
+                                      borderRadius: '6px',
+                                      fontSize: '10.5px',
+                                      border: 'none',
+                                    }}
+                                  >
+                                    <IconTransit size={13} />
+                                    <span>🛵 Despachar</span>
+                                  </button>
+                                  <button
+                                    onClick={() => {
+                                      if (confirm(`¿Marcar la comanda #${order.id} como devuelta?`)) {
+                                        updateOrderStatus(order.id, 'devuelto');
+                                        showToast(`Comanda #${order.id} marcada como devuelta.`, 'error');
+                                      }
+                                    }}
+                                    className="btn py-1 px-2 fw-bold d-flex align-items-center justify-content-center"
+                                    style={{
+                                      background: '#fee2e2',
+                                      color: '#b91c1c',
+                                      border: '1px solid #fca5a5',
+                                      borderRadius: '6px',
+                                      fontSize: '10px',
+                                      whiteSpace: 'nowrap',
+                                    }}
+                                    title="Marcar Devuelto"
+                                  >
+                                    <span>↩️ Devolver</span>
+                                  </button>
+                                </div>
+                              </>
                             )}
 
                             {isInTransit && (
@@ -6418,6 +6522,246 @@ export default function AdminPOSPage() {
               >
                 Cancelar
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── MODAL PERSONALIZAR PEDIDO (AGREGAR ADICIÓN CON PRECIO MANUAL) ── */}
+      {customizingOrder && (
+        <div
+          className="position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center p-3"
+          style={{
+            background: 'rgba(15, 23, 42, 0.65)',
+            backdropFilter: 'blur(3px)',
+            zIndex: 1100,
+          }}
+        >
+          <div
+            className="bg-white rounded-4 shadow-lg border overflow-hidden d-flex flex-column"
+            style={{
+              maxWidth: '520px',
+              width: '100%',
+              maxHeight: '92vh',
+              borderColor: '#e2e8f0',
+            }}
+          >
+            {/* Header del Modal */}
+            <div
+              className="px-4 py-3 border-bottom d-flex justify-content-between align-items-center"
+              style={{ background: '#0f172a', color: '#ffffff' }}
+            >
+              <div>
+                <div className="d-flex align-items-center gap-2">
+                  <span style={{ fontSize: '18px' }}>🛠️</span>
+                  <h5 className="m-0 fw-bold" style={{ fontSize: '15px', color: '#ffffff' }}>
+                    Personalizar Pedido #{customizingOrder.id}
+                  </h5>
+                </div>
+                <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '2px' }}>
+                  Cliente: <strong>{customizingOrder.customer?.nombre || 'Consumidor'}</strong> • Estado: {customizingOrder.status === 'en_cocina' ? '👨‍🍳 En Cocina' : '⏳ Pendiente'}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCustomizingOrder(null)}
+                className="btn-close btn-close-white"
+                aria-label="Close"
+              />
+            </div>
+
+            {/* Body del Modal */}
+            <div className="p-4 overflow-auto flex-grow-1" style={{ fontSize: '13px' }}>
+              {/* Ítems actuales del pedido */}
+              <div className="mb-3 p-2.5 rounded-3 border" style={{ background: '#f8fafc', borderColor: '#e2e8f0' }}>
+                <div className="d-flex justify-content-between align-items-center mb-1.5 pb-1 border-bottom">
+                  <span className="fw-bold" style={{ fontSize: '11.5px', color: '#334155' }}>
+                    📋 Ítems Actuales en Cocina:
+                  </span>
+                  <span className="fw-bold" style={{ fontSize: '11.5px', color: '#166534' }}>
+                    Subtotal: {formatPrice(customizingOrder.subtotal || 0)}
+                  </span>
+                </div>
+                <div style={{ maxHeight: '100px', overflowY: 'auto' }}>
+                  {(customizingOrder.items || []).map((it, idx) => (
+                    <div key={idx} className="d-flex justify-content-between align-items-center py-0.5" style={{ fontSize: '11px' }}>
+                      <span className="text-truncate" style={{ maxWidth: '280px' }}>
+                        {it.quantity || 1}x {it.name}
+                      </span>
+                      <span className="fw-bold">
+                        {formatPrice((it.price || 0) * (it.quantity || 1))}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Formulario de Adición Personalizada con Precio Manual */}
+              <div className="p-3 rounded-3 border mb-3" style={{ background: '#ffffff', borderColor: '#93c5fd', boxShadow: '0 2px 6px rgba(59,130,246,0.08)' }}>
+                <div className="d-flex align-items-center gap-1.5 mb-2">
+                  <span style={{ fontSize: '14px' }}>➕</span>
+                  <span className="fw-bold" style={{ fontSize: '12.5px', color: '#1d4ed8' }}>
+                    Nueva Adición Personalizada (Precio Manual):
+                  </span>
+                </div>
+
+                <div className="mb-2">
+                  <label className="form-label fw-bold mb-1" style={{ fontSize: '11px', color: '#334155' }}>
+                    Nombre de la Adición o Producto: *
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Ej: Porción de papas francesa, Gaseosa 400ml, Doble carne..."
+                    value={customAddName}
+                    onChange={(e) => setCustomAddName(e.target.value)}
+                    className="form-control form-control-sm"
+                    style={{ fontSize: '12px', borderRadius: '6px' }}
+                    autoFocus
+                  />
+                </div>
+
+                <div className="row g-2 mb-2">
+                  <div className="col-7">
+                    <label className="form-label fw-bold mb-1" style={{ fontSize: '11px', color: '#334155' }}>
+                      Precio Manual ($ COP): *
+                    </label>
+                    <input
+                      type="number"
+                      placeholder="Ej: 5000"
+                      value={customAddPrice}
+                      onChange={(e) => setCustomAddPrice(e.target.value)}
+                      className="form-control form-control-sm"
+                      style={{ fontSize: '12px', borderRadius: '6px' }}
+                      min="0"
+                      step="500"
+                    />
+                  </div>
+                  <div className="col-5">
+                    <label className="form-label fw-bold mb-1" style={{ fontSize: '11px', color: '#334155' }}>
+                      Cantidad:
+                    </label>
+                    <div className="d-flex align-items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setCustomAddQty((q) => Math.max(1, q - 1))}
+                        className="btn btn-sm btn-light border py-0 px-2 fw-bold"
+                        style={{ height: '31px' }}
+                      >
+                        -
+                      </button>
+                      <input
+                        type="number"
+                        value={customAddQty}
+                        onChange={(e) => setCustomAddQty(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                        className="form-control form-control-sm text-center py-0"
+                        style={{ height: '31px', fontSize: '12px' }}
+                        min="1"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setCustomAddQty((q) => q + 1)}
+                        className="btn btn-sm btn-light border py-0 px-2 fw-bold"
+                        style={{ height: '31px' }}
+                      >
+                        +
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mb-2">
+                  <label className="form-label fw-bold mb-1" style={{ fontSize: '11px', color: '#334155' }}>
+                    Nota para Cocina (Opcional):
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Ej: Bien crocantes, sin hielo, salsa aparte..."
+                    value={customAddNote}
+                    onChange={(e) => setCustomAddNote(e.target.value)}
+                    className="form-control form-control-sm"
+                    style={{ fontSize: '11.5px', borderRadius: '6px' }}
+                  />
+                </div>
+
+                {/* Sugerencias Rápidas de la Carta */}
+                <div className="mt-2 pt-2 border-top">
+                  <span style={{ fontSize: '10.5px', fontWeight: 700, color: '#64748b' }}>
+                    💡 Sugerencias Rápidas (1 clic para rellenar):
+                  </span>
+                  <div className="d-flex gap-1 flex-wrap mt-1">
+                    {[
+                      { name: 'Papas Francesas', price: 6000 },
+                      { name: 'Gaseosa 400ml', price: 4000 },
+                      { name: 'Tocineta Extra', price: 4000 },
+                      { name: 'Queso Extra', price: 3000 },
+                      { name: 'Carne Extra 150g', price: 8000 },
+                      { name: 'Cerveza Club Colombia', price: 6000 },
+                    ].map((sug, sIdx) => (
+                      <button
+                        key={sIdx}
+                        type="button"
+                        onClick={() => {
+                          setCustomAddName(sug.name);
+                          setCustomAddPrice(String(sug.price));
+                        }}
+                        className="btn btn-sm btn-light border py-0 px-2"
+                        style={{ fontSize: '10px', borderRadius: '12px' }}
+                      >
+                        {sug.name} (${sug.price.toLocaleString('es-CO')})
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Resumen del Nuevo Total */}
+              <div className="p-3 rounded-3 border d-flex justify-content-between align-items-center" style={{ background: '#f0fdf4', borderColor: '#86efac' }}>
+                <div>
+                  <div style={{ fontSize: '11px', fontWeight: 700, color: '#166534' }}>
+                    NUEVO TOTAL DE LA COMANDA:
+                  </div>
+                  <div style={{ fontSize: '10px', color: '#4b5563' }}>
+                    Incluye subtotal anterior + adición ({formatPrice((parseInt(customAddPrice, 10) || 0) * (customAddQty || 1))})
+                  </div>
+                </div>
+                <div style={{ fontSize: '20px', fontWeight: 900, color: '#15803d' }}>
+                  {formatPrice((customizingOrder.total || 0) + ((parseInt(customAddPrice, 10) || 0) * (customAddQty || 1)))}
+                </div>
+              </div>
+            </div>
+
+            {/* Footer de Acciones */}
+            <div className="p-3 border-top d-flex flex-column gap-2" style={{ background: '#f8fafc', borderColor: '#e2e8f0' }}>
+              <button
+                type="button"
+                onClick={() => handleSaveCustomAddition(true)}
+                disabled={!customAddName.trim() || !customAddPrice || isSavingCustomAdd}
+                className="btn btn-dark fw-bold py-2 d-flex align-items-center justify-content-center gap-2 shadow-sm"
+                style={{ background: '#0f172a', border: 'none', borderRadius: '8px', fontSize: '12.5px' }}
+              >
+                <IconPrinter size={15} />
+                <span>Guardar y Actualizar Factura (Reimprimir 3 Copias)</span>
+              </button>
+
+              <div className="d-flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleSaveCustomAddition(false)}
+                  disabled={!customAddName.trim() || !customAddPrice || isSavingCustomAdd}
+                  className="btn btn-primary fw-bold flex-grow-1 py-1.5"
+                  style={{ background: '#7c3aed', borderColor: '#7c3aed', borderRadius: '8px', fontSize: '12px' }}
+                >
+                  <span>👨‍🍳 Guardar Adición en Cocina (Sin Imprimir)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCustomizingOrder(null)}
+                  className="btn btn-outline-secondary py-1.5 px-3"
+                  style={{ borderRadius: '8px', fontSize: '12px' }}
+                >
+                  Cancelar
+                </button>
+              </div>
             </div>
           </div>
         </div>
