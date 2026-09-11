@@ -1,29 +1,37 @@
 /**
- * Almacén centralizado de pedidos en memoria del servidor.
- * Respalda automáticamente a un archivo JSON para sobrevivir reinicios.
- * Gestiona la lista de clientes SSE conectados para notificaciones en tiempo real.
+ * Almacén centralizado de pedidos en el servidor.
+ * Sincroniza automáticamente con Supabase en la nube y respalda a .data/orders.json.
+ * Gestiona clientes SSE conectados para notificaciones inmediatas en tiempo real.
  */
 
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
+import { supabase } from '../../lib/supabaseClient';
 
-// ── Ruta del archivo de respaldo ──────────────────────────────────────
-const DATA_DIR = path.join(process.cwd(), '.data');
+// ── Ruta del archivo de respaldo local ─────────────────────────────────
+// En Vercel (Serverless), /var/task es read-only; usamos os.tmpdir() (/tmp)
+const isVercel = Boolean(
+  process.env.VERCEL ||
+  process.env.NEXT_PUBLIC_VERCEL_ENV ||
+  process.env.AWS_LAMBDA_FUNCTION_NAME
+);
+const DATA_DIR = isVercel
+  ? path.join(os.tmpdir(), '.data')
+  : path.join(process.cwd(), '.data');
 const ORDERS_FILE = path.join(DATA_DIR, 'orders.json');
 const AUDIT_FILE = path.join(DATA_DIR, 'audit-orders.json');
 
-// ── Asegurar que el directorio .data exista ──────────────────────────
 function ensureDataDir() {
   try {
     if (!fs.existsSync(DATA_DIR)) {
       fs.mkdirSync(DATA_DIR, { recursive: true });
     }
   } catch (e) {
-    console.error('[OrderStore] Error creando directorio .data:', e);
+    // Ignorar si el sistema de archivos no es escribible
   }
 }
 
-// ── Cargar datos desde archivo ────────────────────────────────────────
 function loadFromFile(filePath) {
   try {
     if (fs.existsSync(filePath)) {
@@ -32,37 +40,108 @@ function loadFromFile(filePath) {
       if (Array.isArray(parsed)) return parsed;
     }
   } catch (e) {
-    console.error(`[OrderStore] Error leyendo ${filePath}:`, e);
+    // Continuar con memoria
   }
   return [];
 }
 
-// ── Guardar datos a archivo (async, no bloquea) ──────────────────────
 function saveToFile(filePath, data) {
   try {
     ensureDataDir();
     fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
   } catch (e) {
-    console.error(`[OrderStore] Error escribiendo ${filePath}:`, e);
+    // Silencioso en entornos serverless sin permisos de disco
   }
 }
 
-// ── Estado en memoria (singleton del proceso Node) ───────────────────
 ensureDataDir();
 
 /** @type {Array} Pedidos activos */
 let orders = loadFromFile(ORDERS_FILE);
 
-/** @type {Array} Pedidos de auditoría (historial completo) */
+/** @type {Array} Pedidos de auditoría */
 let auditOrders = loadFromFile(AUDIT_FILE);
 
 /** @type {Set<ReadableStreamDefaultController>} Clientes SSE conectados */
 const sseClients = new Set();
 
-// ── Persistir cambios y notificar a todos los clientes SSE ───────────
-function persist() {
+// ── Sincronización con Supabase (Servidor a Nube) ─────────────────────
+let isSyncingToSupabase = false;
+let pendingSupabaseSync = false;
+
+async function syncToSupabase() {
+  if (isSyncingToSupabase) {
+    pendingSupabaseSync = true;
+    return;
+  }
+  isSyncingToSupabase = true;
+  pendingSupabaseSync = false;
+
+  try {
+    const { error } = await supabase
+      .from('app_state')
+      .update({
+        orders_data: orders,
+        audit_orders_data: auditOrders,
+      })
+      .eq('id', 'tronos');
+
+    if (error) {
+      console.warn('[OrderStore] Supabase update warning:', error.message);
+    }
+  } catch (e) {
+    console.error('[OrderStore] Error guardando pedidos en Supabase:', e);
+  } finally {
+    isSyncingToSupabase = false;
+    if (pendingSupabaseSync) {
+      setTimeout(syncToSupabase, 150);
+    }
+  }
+}
+
+// Inicializar desde Supabase si hay datos en la nube más recientes
+let initPromise = null;
+export async function ensureInitialized() {
+  if (!initPromise) {
+    initPromise = (async () => {
+      try {
+        const { data, error } = await supabase
+          .from('app_state')
+          .select('orders_data, audit_orders_data')
+          .eq('id', 'tronos')
+          .single();
+
+        if (!error && data) {
+          let remoteOrders = data.orders_data;
+          if (typeof remoteOrders === 'string') {
+            try { remoteOrders = JSON.parse(remoteOrders); } catch (e) {}
+          }
+          let remoteAudit = data.audit_orders_data;
+          if (typeof remoteAudit === 'string') {
+            try { remoteAudit = JSON.parse(remoteAudit); } catch (e) {}
+          }
+
+          if (Array.isArray(remoteOrders) && remoteOrders.length > 0) {
+            await bulkSyncOrders(remoteOrders, Array.isArray(remoteAudit) ? remoteAudit : [], false);
+          }
+        }
+      } catch (e) {
+        // Continuar con los datos en memoria/archivo
+      }
+    })();
+  }
+  return initPromise;
+}
+
+// Disparar sincronización inicial en background al cargar el módulo
+ensureInitialized();
+
+async function persist(shouldSyncSupabase = true) {
   saveToFile(ORDERS_FILE, orders);
   saveToFile(AUDIT_FILE, auditOrders);
+  if (shouldSyncSupabase) {
+    await syncToSupabase();
+  }
 }
 
 function broadcast(eventType, payload) {
@@ -71,7 +150,6 @@ function broadcast(eventType, payload) {
     try {
       controller.enqueue(new TextEncoder().encode(message));
     } catch (e) {
-      // Cliente desconectado, se limpiará en el close handler
       sseClients.delete(controller);
     }
   }
@@ -87,89 +165,119 @@ export function getAuditOrders() {
   return auditOrders;
 }
 
-export function addOrder(newOrder) {
+export async function addOrder(newOrder) {
   const orderWithMeta = {
     ...newOrder,
     createdAt: newOrder.date || new Date().toISOString(),
     invoiced: false,
     auditFlag: 'registrado',
+    updatedAt: new Date().toISOString(),
   };
 
-  // Evitar duplicados
-  if (orders.some(o => o.id === orderWithMeta.id)) {
-    return orderWithMeta;
+  const existingIdx = orders.findIndex((o) => o.id === orderWithMeta.id);
+  if (existingIdx !== -1) {
+    return orders[existingIdx];
   }
 
   orders = [orderWithMeta, ...orders];
-  auditOrders = [orderWithMeta, ...auditOrders.filter(o => o.id !== orderWithMeta.id)];
-  persist();
+  auditOrders = [orderWithMeta, ...auditOrders.filter((o) => o.id !== orderWithMeta.id)];
+  await persist();
   broadcast('NEW_ORDER', orderWithMeta);
   return orderWithMeta;
 }
 
-export function updateOrderStatus(orderId, status, extraMeta = {}) {
+export async function updateOrderStatus(orderId, status, extraMeta = {}) {
+  const now = new Date().toISOString();
   const updateFn = (o) =>
     o.id === orderId
-      ? { ...o, ...(status ? { status } : {}), ...extraMeta, updatedAt: new Date().toISOString() }
+      ? { ...o, ...(status ? { status } : {}), ...extraMeta, updatedAt: now }
       : o;
 
   orders = orders.map(updateFn);
   auditOrders = auditOrders.map(updateFn);
-  persist();
+  await persist();
 
-  const updated = orders.find(o => o.id === orderId) || auditOrders.find(o => o.id === orderId);
+  const updated = orders.find((o) => o.id === orderId) || auditOrders.find((o) => o.id === orderId);
   broadcast('ORDER_UPDATED', { orderId, status, extraMeta, order: updated });
   return updated;
 }
 
-export function deleteOrder(orderId, motivo = 'Anulado por Administrador') {
-  orders = orders.filter(o => o.id !== orderId);
-  auditOrders = auditOrders.map(o =>
+export async function deleteOrder(orderId, motivo = 'Anulado por Administrador') {
+  orders = orders.filter((o) => o.id !== orderId);
+  auditOrders = auditOrders.map((o) =>
     o.id === orderId
       ? { ...o, status: 'anulado_admin', anuladoAt: new Date().toISOString(), anuladoMotivo: motivo }
       : o
   );
-  persist();
+  await persist();
   broadcast('ORDER_DELETED', { orderId, motivo });
 }
 
-export function resetAllOrders() {
+export async function resetAllOrders() {
   orders = [];
   auditOrders = [];
-  persist();
+  await persist();
   broadcast('ORDERS_RESET', {});
 }
 
-export function bulkSyncOrders(newOrders, newAudit) {
+export async function bulkSyncOrders(newOrders, newAudit, shouldSyncSupabase = true) {
+  let changed = false;
+
   if (Array.isArray(newOrders)) {
-    // Merge: agregar pedidos que no existan en el servidor
-    const existingIds = new Set(orders.map(o => o.id));
-    const newOnes = newOrders.filter(o => !existingIds.has(o.id));
-    if (newOnes.length > 0) {
-      orders = [...newOnes, ...orders];
-    }
-    // Actualizar estados de los que ya existen
+    const map = new Map();
+    orders.forEach((o) => map.set(o.id, o));
+
     for (const incoming of newOrders) {
-      const idx = orders.findIndex(o => o.id === incoming.id);
-      if (idx !== -1 && incoming.updatedAt && incoming.updatedAt > (orders[idx].updatedAt || '')) {
-        orders[idx] = incoming;
+      if (!incoming || !incoming.id) continue;
+      const existing = map.get(incoming.id);
+      if (!existing) {
+        map.set(incoming.id, incoming);
+        changed = true;
+      } else {
+        const inTime = incoming.updatedAt || incoming.date || '';
+        const exTime = existing.updatedAt || existing.date || '';
+        if (inTime > exTime) {
+          map.set(incoming.id, { ...existing, ...incoming });
+          changed = true;
+        }
       }
     }
+    if (changed) {
+      orders = Array.from(map.values()).sort(
+        (a, b) => new Date(b.date || b.createdAt || 0) - new Date(a.date || a.createdAt || 0)
+      );
+    }
   }
+
   if (Array.isArray(newAudit)) {
-    const existingAuditIds = new Set(auditOrders.map(o => o.id));
-    const newAuditOnes = newAudit.filter(o => !existingAuditIds.has(o.id));
-    if (newAuditOnes.length > 0) {
-      auditOrders = [...newAuditOnes, ...auditOrders];
-    }
+    const map = new Map();
+    auditOrders.forEach((o) => map.set(o.id, o));
+
     for (const incoming of newAudit) {
-      const idx = auditOrders.findIndex(o => o.id === incoming.id);
-      if (idx !== -1 && incoming.updatedAt && incoming.updatedAt > (auditOrders[idx].updatedAt || '')) {
-        auditOrders[idx] = incoming;
+      if (!incoming || !incoming.id) continue;
+      const existing = map.get(incoming.id);
+      if (!existing) {
+        map.set(incoming.id, incoming);
+        changed = true;
+      } else {
+        const inTime = incoming.updatedAt || incoming.date || '';
+        const exTime = existing.updatedAt || existing.date || '';
+        if (inTime > exTime) {
+          map.set(incoming.id, { ...existing, ...incoming });
+          changed = true;
+        }
       }
     }
+    if (changed) {
+      auditOrders = Array.from(map.values()).sort(
+        (a, b) => new Date(b.date || b.createdAt || 0) - new Date(a.date || a.createdAt || 0)
+      );
+    }
   }
-  persist();
+
+  if (changed) {
+    await persist(shouldSyncSupabase);
+  }
 }
 
 // ── SSE Client Management ────────────────────────────────────────────

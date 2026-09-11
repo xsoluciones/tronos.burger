@@ -60,6 +60,7 @@ export default function CajaPage() {
   // ── Estados de Borrado de Datos y Reporte PDF ──────────────────────
   const [showResetConfirmModal, setShowResetConfirmModal] = useState(false);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const [actionLoadingId, setActionLoadingId] = useState(null);
 
   // ── Configuración WhatsApp Domicilios (Asesor de Caja) ───────────
   const [showWhatsAppModal, setShowWhatsAppModal] = useState(false);
@@ -474,9 +475,15 @@ export default function CajaPage() {
       minute: '2-digit',
     });
 
+    const orderTypeLabel = 
+      order.orderType === 'local' ? '🍽️ Consumo en Mesa / Local' :
+      order.orderType === 'recoger' ? '🛍️ Para Llevar / Mostrador' :
+      '🛵 Domicilio';
+
     const itemsHtml = (order.items || [])
       .map((item) => {
-        const itemTotal = (item.price || 0) * (item.quantity || 1);
+        const extrasTotal = (item.selectedExtras || []).reduce((sum, e) => sum + ((e.price || 0) * (e.quantity || 1)), 0);
+        const itemTotal = ((item.price || 0) + extrasTotal) * (item.quantity || 1);
         const extrasHtml = (item.selectedExtras || [])
           .map((e) => `<div style="font-size:11px; color:#4b5563; padding-left:14px; margin-top:2px;">+ ${e.name} x${e.quantity || 1} (${formatPrice((e.price || 0) * (e.quantity || 1))})</div>`)
           .join('');
@@ -613,6 +620,8 @@ export default function CajaPage() {
 
     <div class="meta-grid">
       <div><strong>FECHA:</strong> ${dateFormatted}</div>
+      <div><strong>SERVICIO:</strong> ${orderTypeLabel}</div>
+      <div><strong>MÉTODO DE PAGO:</strong> ${order.paymentMethod || 'Efectivo'}</div>
       <div><strong>CLIENTE:</strong> ${order.customer?.nombre || 'Consumidor Final'}</div>
       <div><strong>TELÉFONO:</strong> ${order.customer?.telefono || 'N/A'}</div>
       <div><strong>DIRECCIÓN:</strong> ${order.customer?.direccion || 'En local'}</div>
@@ -630,6 +639,23 @@ export default function CajaPage() {
         ${itemsHtml}
       </tbody>
     </table>
+
+    ${(order.subtotal || order.deliveryFee) ? `
+      <div style="border-top:1px solid #000000; padding:8px 0; margin-top:8px; font-size:12px;">
+        ${order.subtotal ? `
+          <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+            <span>Subtotal Productos:</span>
+            <strong>${formatPrice(order.subtotal)}</strong>
+          </div>
+        ` : ''}
+        ${(order.deliveryFee && order.deliveryFee > 0) ? `
+          <div style="display:flex; justify-content:space-between; margin-bottom:4px; color:#ea580c;">
+            <span>🛵 Costo Domicilio:</span>
+            <strong>+${formatPrice(order.deliveryFee)}</strong>
+          </div>
+        ` : ''}
+      </div>
+    ` : ''}
 
     <div class="total-box">
       <span class="total-label">TOTAL A PAGAR</span>
@@ -665,15 +691,17 @@ export default function CajaPage() {
       }
     }
 
-    const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = fileName;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    if (!savedInFolder) {
+      const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
 
     return { success: true, method: savedInFolder ? 'folder' : 'download', fileName, folderName: directoryHandle?.name };
   };
@@ -778,9 +806,15 @@ export default function CajaPage() {
       minute: '2-digit',
     });
 
+    const orderTypeLabel = 
+      order.orderType === 'local' ? 'MESA / CONSUMO LOCAL' :
+      order.orderType === 'recoger' ? 'PARA LLEVAR / MOSTRADOR' :
+      'DOMICILIO';
+
     const itemsHtml = (order.items || [])
       .map((item) => {
-        const itemTotal = (item.price || 0) * (item.quantity || 1);
+        const extrasTotal = (item.selectedExtras || []).reduce((sum, e) => sum + ((e.price || 0) * (e.quantity || 1)), 0);
+        const itemTotal = ((item.price || 0) + extrasTotal) * (item.quantity || 1);
         const extrasHtml = (item.selectedExtras || [])
           .map((e) => `<div style="font-size:10px; color:#333333; padding-left:12px; margin-top:1px;">+ ${e.name} x${e.quantity || 1} (${formatPrice((e.price || 0) * (e.quantity || 1))})</div>`)
           .join('');
@@ -817,6 +851,8 @@ export default function CajaPage() {
 
         <div class="meta-box">
           <div class="meta-row"><span class="meta-label">Fecha:</span> <span class="meta-val">${dateFormatted}</span></div>
+          <div class="meta-row"><span class="meta-label">Servicio:</span> <span class="meta-val" style="font-weight:900;">${orderTypeLabel}</span></div>
+          <div class="meta-row"><span class="meta-label">Pago:</span> <span class="meta-val">${order.paymentMethod || 'Efectivo'}</span></div>
           <div class="meta-row"><span class="meta-label">Cliente:</span> <span class="meta-val">${order.customer?.nombre || 'Consumidor Final'}</span></div>
           <div class="meta-row"><span class="meta-label">Tel:</span> <span class="meta-val">${order.customer?.telefono || 'N/A'}</span></div>
           <div class="meta-row"><span class="meta-label">Dir:</span> <span class="meta-val">${order.customer?.direccion || 'En local'}</span></div>
@@ -831,6 +867,23 @@ export default function CajaPage() {
         <div style="margin-bottom:6px;">
           ${itemsHtml}
         </div>
+
+        ${(order.subtotal || order.deliveryFee) ? `
+          <div style="border-top:1px dashed #000000; padding:4px 0; margin-top:4px; font-size:10px;">
+            ${order.subtotal ? `
+              <div style="display:flex; justify-content:space-between; margin-bottom:2px;">
+                <span>SUBTOTAL:</span>
+                <span>${formatPrice(order.subtotal)}</span>
+              </div>
+            ` : ''}
+            ${(order.deliveryFee && order.deliveryFee > 0) ? `
+              <div style="display:flex; justify-content:space-between; margin-bottom:2px; font-weight:800;">
+                <span>🛵 DOMICILIO:</span>
+                <span>+${formatPrice(order.deliveryFee)}</span>
+              </div>
+            ` : ''}
+          </div>
+        ` : ''}
 
         <div class="total-box">
           <span class="total-label">TOTAL A PAGAR:</span>
@@ -917,7 +970,7 @@ export default function CajaPage() {
     }
     .meta-box { border: 1px solid #000000; padding: 6px 7px; margin: 6px 0 8px 0; font-size: 10px; }
     .meta-row { display: flex; margin-bottom: 2px; }
-    .meta-label { font-weight: 800; width: 55px; }
+    .meta-label { font-weight: 800; width: 62px; }
     .meta-val { font-weight: 600; flex: 1; }
     .items-header {
       display: flex;
@@ -987,7 +1040,7 @@ export default function CajaPage() {
 </html>`;
   };
 
-  // Impresión aislada mediante iframe
+  // Impresión aislada mediante iframe (renderizado garantizado sin página en blanco)
   const printReceiptIframe = (receiptHtml, docTitle) => {
     return new Promise((resolve) => {
       const oldIframe = document.getElementById('caja-print-iframe');
@@ -996,12 +1049,13 @@ export default function CajaPage() {
       const iframe = document.createElement('iframe');
       iframe.id = 'caja-print-iframe';
       iframe.style.position = 'fixed';
-      iframe.style.right = '0';
-      iframe.style.bottom = '0';
-      iframe.style.width = '0';
-      iframe.style.height = '0';
+      iframe.style.left = '-9999px';
+      iframe.style.top = '-9999px';
+      iframe.style.width = '80mm';
+      iframe.style.height = '100mm';
       iframe.style.border = '0';
-      iframe.style.visibility = 'hidden';
+      iframe.style.opacity = '0';
+      iframe.style.pointerEvents = 'none';
       document.body.appendChild(iframe);
 
       const doc = iframe.contentWindow.document;
@@ -1022,7 +1076,7 @@ export default function CajaPage() {
           iframe.remove();
           resolve();
         }, 2500);
-      }, 350);
+      }, 500);
     });
   };
 
@@ -1069,12 +1123,18 @@ export default function CajaPage() {
 
   // ── REGLA OBLIGATORIA: Para pasar a Cocina se debe Facturar e Imprimir sí o sí ──
   const handleEnviarACocina = async (order) => {
-    if (!order.invoiced) {
-      showToast(`🧾 Facturación obligatoria: Imprimiendo tickets comanda #${order.id} para enviar a cocina...`, 'info');
-      await handleFacturarTresCopias(order);
-    } else {
-      updateOrderStatus(order.id, 'en_cocina');
-      showToast(`Comanda #${order.id} enviada a Cocina.`);
+    if (actionLoadingId === order.id) return;
+    setActionLoadingId(order.id);
+    try {
+      if (!order.invoiced) {
+        showToast(`🧾 Facturación obligatoria: Imprimiendo tickets comanda #${order.id} para enviar a cocina...`, 'info');
+        await handleFacturarTresCopias(order);
+      } else {
+        updateOrderStatus(order.id, 'en_cocina');
+        showToast(`Comanda #${order.id} enviada a Cocina.`);
+      }
+    } finally {
+      setTimeout(() => setActionLoadingId(null), 600);
     }
   };
 
@@ -2103,9 +2163,13 @@ export default function CajaPage() {
                           <div className="d-flex gap-1.5">
                             <button
                               onClick={() => {
+                                if (actionLoadingId === order.id) return;
+                                setActionLoadingId(order.id);
                                 updateOrderStatus(order.id, 'en_camino');
                                 showToast(`Comanda #${order.id} salió de cocina: ¡En Camino!`);
+                                setTimeout(() => setActionLoadingId(null), 500);
                               }}
+                              disabled={actionLoadingId === order.id}
                               className="btn btn-sm w-100 fw-bold d-flex align-items-center justify-content-center gap-1 py-1"
                               style={{
                                 background: '#22c55e',
@@ -2113,17 +2177,22 @@ export default function CajaPage() {
                                 borderRadius: '6px',
                                 fontSize: '10.5px',
                                 padding: '5px',
+                                opacity: actionLoadingId === order.id ? 0.7 : 1,
                               }}
                             >
                               <span>🛵 Despachar</span>
                             </button>
                             <button
                               onClick={() => {
+                                if (actionLoadingId === order.id) return;
                                 if (confirm(`¿Marcar la comanda #${order.id} como devuelta?`)) {
+                                  setActionLoadingId(order.id);
                                   updateOrderStatus(order.id, 'devuelto');
                                   showToast(`Comanda #${order.id} marcada como devuelta.`, 'error');
+                                  setTimeout(() => setActionLoadingId(null), 500);
                                 }
                               }}
+                              disabled={actionLoadingId === order.id}
                               className="btn btn-sm fw-bold d-flex align-items-center justify-content-center px-2 py-1"
                               style={{
                                 background: '#fee2e2',
@@ -2132,6 +2201,7 @@ export default function CajaPage() {
                                 borderRadius: '6px',
                                 fontSize: '10px',
                                 whiteSpace: 'nowrap',
+                                opacity: actionLoadingId === order.id ? 0.7 : 1,
                               }}
                               title="Marcar Devuelto"
                             >
@@ -2144,9 +2214,13 @@ export default function CajaPage() {
                           <div className="d-flex gap-1.5">
                             <button
                               onClick={() => {
+                                if (actionLoadingId === order.id) return;
+                                setActionLoadingId(order.id);
                                 updateOrderStatus(order.id, 'entregado');
                                 showToast(`Comanda #${order.id} entregada con éxito.`);
+                                setTimeout(() => setActionLoadingId(null), 500);
                               }}
+                              disabled={actionLoadingId === order.id}
                               className="btn btn-sm w-100 fw-bold d-flex align-items-center justify-content-center gap-1 py-1"
                               style={{
                                 background: '#7c3aed',
@@ -2154,17 +2228,22 @@ export default function CajaPage() {
                                 borderRadius: '6px',
                                 fontSize: '10.5px',
                                 padding: '5px',
+                                opacity: actionLoadingId === order.id ? 0.7 : 1,
                               }}
                             >
                               <span>✅ Entregado</span>
                             </button>
                             <button
                               onClick={() => {
+                                if (actionLoadingId === order.id) return;
                                 if (confirm(`¿Marcar la comanda #${order.id} como devuelta?`)) {
+                                  setActionLoadingId(order.id);
                                   updateOrderStatus(order.id, 'devuelto');
                                   showToast(`Comanda #${order.id} marcada como devuelta.`, 'error');
+                                  setTimeout(() => setActionLoadingId(null), 500);
                                 }
                               }}
+                              disabled={actionLoadingId === order.id}
                               className="btn btn-sm fw-bold d-flex align-items-center justify-content-center px-2 py-1"
                               style={{
                                 background: '#fee2e2',
@@ -2173,6 +2252,7 @@ export default function CajaPage() {
                                 borderRadius: '6px',
                                 fontSize: '10px',
                                 whiteSpace: 'nowrap',
+                                opacity: actionLoadingId === order.id ? 0.7 : 1,
                               }}
                               title="Marcar Devuelto"
                             >
@@ -2184,11 +2264,15 @@ export default function CajaPage() {
                         {isDelivered && (
                           <button
                             onClick={() => {
+                              if (actionLoadingId === order.id) return;
                               if (confirm(`¿Marcar la comanda #${order.id} entregada como devuelta?`)) {
+                                setActionLoadingId(order.id);
                                 updateOrderStatus(order.id, 'devuelto');
                                 showToast(`Comanda #${order.id} marcada como devuelta.`, 'error');
+                                setTimeout(() => setActionLoadingId(null), 500);
                               }
                             }}
+                            disabled={actionLoadingId === order.id}
                             className="btn btn-sm w-100 fw-bold d-flex align-items-center justify-content-center gap-1 py-1"
                             style={{
                               background: 'transparent',
@@ -2197,6 +2281,7 @@ export default function CajaPage() {
                               borderRadius: '6px',
                               fontSize: '10px',
                               padding: '4px',
+                              opacity: actionLoadingId === order.id ? 0.7 : 1,
                             }}
                           >
                             <span>↩️ Marcar Devuelto</span>
@@ -2206,6 +2291,7 @@ export default function CajaPage() {
                         {isReturned && (
                           <button
                             onClick={() => handleEnviarACocina(order)}
+                            disabled={actionLoadingId === order.id}
                             className="btn btn-sm w-100 fw-bold d-flex align-items-center justify-content-center gap-1 py-1"
                             style={{
                               background: '#7c3aed',
@@ -2213,6 +2299,7 @@ export default function CajaPage() {
                               borderRadius: '6px',
                               fontSize: '10.5px',
                               padding: '4px',
+                              opacity: actionLoadingId === order.id ? 0.7 : 1,
                             }}
                           >
                             <span>👨‍🍳 Reenviar a Cocina</span>

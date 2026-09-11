@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
+import { createContext, useContext, useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { defaultMenuData } from '../data/menuData';
 import { supabase } from '../lib/supabaseClient';
 
@@ -287,8 +287,79 @@ export function MenuProvider({ children }) {
     }
   }, []);
 
-  // ── Sincronizar pedidos con Supabase (Acceso Multi-Computador) ──────
+  // ── Guard para evitar sobreescrituras de cambios locales recientes ──
+  const recentLocalUpdatesRef = useRef(new Map());
+
+  // Smart merge que respeta la versión más reciente por updatedAt y respeta el guard de actualización local
+  const smartMergeOrders = useCallback((currentList, incomingList) => {
+    if (!Array.isArray(incomingList)) return currentList;
+    if (!Array.isArray(currentList) || currentList.length === 0) return incomingList;
+
+    const now = Date.now();
+    const map = new Map();
+    currentList.forEach((o) => {
+      if (o && o.id) map.set(o.id, o);
+    });
+
+    let hasChanges = false;
+
+    incomingList.forEach((incoming) => {
+      if (!incoming || !incoming.id) return;
+      const current = map.get(incoming.id);
+
+      if (!current) {
+        map.set(incoming.id, incoming);
+        hasChanges = true;
+        return;
+      }
+
+      // Si el pedido fue actualizado localmente en los últimos 15s, protegerlo de sobrescritura
+      const protectUntil = recentLocalUpdatesRef.current?.get(incoming.id) || 0;
+      if (protectUntil > now) {
+        return;
+      }
+
+      const inTime = incoming.updatedAt || incoming.date || incoming.createdAt || '';
+      const curTime = current.updatedAt || current.date || current.createdAt || '';
+
+      if (inTime > curTime) {
+        map.set(incoming.id, { ...current, ...incoming });
+        hasChanges = true;
+      } else if (inTime === curTime) {
+        if (
+          incoming.status !== current.status ||
+          incoming.invoiced !== current.invoiced ||
+          incoming.deliveryFee !== current.deliveryFee
+        ) {
+          map.set(incoming.id, { ...current, ...incoming });
+          hasChanges = true;
+        }
+      }
+    });
+
+    if (!hasChanges && map.size === currentList.length) {
+      return currentList; // Misma referencia para evitar parpadeos y re-renders innecesarios
+    }
+
+    return Array.from(map.values()).sort(
+      (a, b) => new Date(b.date || b.createdAt || 0) - new Date(a.date || a.createdAt || 0)
+    );
+  }, []);
+
+  // ── Sincronizar pedidos con Supabase y el Servidor (Acceso Multi-Computador) ──────
   const saveOrdersToSupabase = useCallback(async (ordersList, auditList) => {
+    // 1) Enviar al servidor local (/api/orders) que sincroniza en disco y con Supabase server-side
+    if (typeof window !== 'undefined') {
+      try {
+        fetch('/api/orders', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'bulk_sync', orders: ordersList, auditOrders: auditList }),
+        }).catch((e) => console.warn('[MenuContext] Sync diferido con /api/orders:', e));
+      } catch (e) {}
+    }
+
+    // 2) Sincronizar también directo con Supabase (con manejo de fallos para que nunca bloquee la UI)
     try {
       const { error } = await supabase
         .from('app_state')
@@ -311,23 +382,27 @@ export function MenuProvider({ children }) {
           .eq('id', 'tronos');
       }
     } catch (e) {
-      console.error('Error al guardar pedidos en Supabase:', e);
+      // El servidor local respaldará la sincronización en background
     }
   }, [restaurantConfig]);
 
   const addOrder = useCallback((newOrder) => {
+    const now = new Date().toISOString();
     const orderWithMeta = {
       ...newOrder,
-      createdAt: newOrder.date || new Date().toISOString(),
+      createdAt: newOrder.date || now,
+      updatedAt: now,
       invoiced: false,
       auditFlag: 'registrado',
     };
+
+    recentLocalUpdatesRef.current.set(orderWithMeta.id, Date.now() + 15000);
 
     let nextOrders = [];
     let nextAudit = [];
 
     setOrders((prev) => {
-      nextOrders = [orderWithMeta, ...prev];
+      nextOrders = [orderWithMeta, ...prev.filter((o) => o.id !== orderWithMeta.id)];
       if (typeof window !== 'undefined') {
         try {
           localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(nextOrders));
@@ -343,9 +418,10 @@ export function MenuProvider({ children }) {
           localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(nextAudit));
         } catch (e) {}
       }
-      saveOrdersToSupabase(nextOrders, nextAudit);
       return nextAudit;
     });
+
+    saveOrdersToSupabase(nextOrders, nextAudit);
 
     if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
       try {
@@ -355,7 +431,6 @@ export function MenuProvider({ children }) {
       } catch (e) {}
     }
 
-    // ── Enviar al servidor para sincronización multi-dispositivo ──
     if (typeof window !== 'undefined') {
       fetch('/api/orders', {
         method: 'POST',
@@ -366,13 +441,16 @@ export function MenuProvider({ children }) {
   }, [saveOrdersToSupabase]);
 
   const updateOrderStatus = useCallback((orderId, status, extraMeta = {}) => {
+    const now = new Date().toISOString();
+    recentLocalUpdatesRef.current.set(orderId, Date.now() + 15000);
+
     let nextOrders = [];
     let nextAudit = [];
 
     setOrders((prev) => {
       nextOrders = prev.map((o) =>
         o.id === orderId
-          ? { ...o, ...(status ? { status } : {}), ...extraMeta, updatedAt: new Date().toISOString() }
+          ? { ...o, ...(status ? { status } : {}), ...extraMeta, updatedAt: now }
           : o
       );
       if (typeof window !== 'undefined') {
@@ -386,7 +464,7 @@ export function MenuProvider({ children }) {
     setAuditOrders((prev) => {
       nextAudit = prev.map((o) =>
         o.id === orderId
-          ? { ...o, ...(status ? { status } : {}), ...extraMeta, updatedAt: new Date().toISOString() }
+          ? { ...o, ...(status ? { status } : {}), ...extraMeta, updatedAt: now }
           : o
       );
       if (typeof window !== 'undefined') {
@@ -394,9 +472,10 @@ export function MenuProvider({ children }) {
           localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(nextAudit));
         } catch (e) {}
       }
-      saveOrdersToSupabase(nextOrders, nextAudit);
       return nextAudit;
     });
+
+    saveOrdersToSupabase(nextOrders, nextAudit);
 
     if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
       try {
@@ -406,7 +485,6 @@ export function MenuProvider({ children }) {
       } catch (e) {}
     }
 
-    // ── Enviar al servidor para sincronización multi-dispositivo ──
     if (typeof window !== 'undefined') {
       fetch('/api/orders', {
         method: 'PUT',
@@ -426,6 +504,8 @@ export function MenuProvider({ children }) {
 
   // Solo Administrador puede anular o eliminar
   const deleteOrder = useCallback((orderId, motivo = 'Anulado por Administrador') => {
+    recentLocalUpdatesRef.current.set(orderId, Date.now() + 15000);
+
     let nextOrders = [];
     let nextAudit = [];
 
@@ -447,6 +527,7 @@ export function MenuProvider({ children }) {
               status: 'anulado_admin',
               anuladoAt: new Date().toISOString(),
               anuladoMotivo: motivo,
+              updatedAt: new Date().toISOString(),
             }
           : o
       );
@@ -455,11 +536,11 @@ export function MenuProvider({ children }) {
           localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(nextAudit));
         } catch (e) {}
       }
-      saveOrdersToSupabase(nextOrders, nextAudit);
       return nextAudit;
     });
 
-    // ── Enviar al servidor para sincronización multi-dispositivo ──
+    saveOrdersToSupabase(nextOrders, nextAudit);
+
     if (typeof window !== 'undefined') {
       fetch('/api/orders', {
         method: 'PUT',
@@ -528,67 +609,82 @@ export function MenuProvider({ children }) {
         }
 
         if (data) {
-          // Parse menu data
+          // Parse menu data (solo actualizar si los datos cambiaron)
           if (data.menu_data) {
             let parsedMenu = data.menu_data;
             if (typeof parsedMenu === 'string') parsedMenu = JSON.parse(parsedMenu);
             
-              let categories = [...parsedMenu];
-              for (const defCat of defaultMenuData) {
-                const existingCatIdx = categories.findIndex((c) => c.id === defCat.id);
-                if (existingCatIdx === -1) {
-                  categories.push(defCat);
-                } else if (defCat.id === 'burgers') {
-                  const updatedItems = categories[existingCatIdx].items.map((item) => {
-                    if (!item.extras || item.extras.length === 0) {
-                      const defItem = defCat.items.find((di) => di.id === item.id);
-                      if (defItem?.extras) {
-                        return { ...item, extras: defItem.extras };
-                      }
+            let categories = [...parsedMenu];
+            for (const defCat of defaultMenuData) {
+              const existingCatIdx = categories.findIndex((c) => c.id === defCat.id);
+              if (existingCatIdx === -1) {
+                categories.push(defCat);
+              } else if (defCat.id === 'burgers') {
+                const updatedItems = categories[existingCatIdx].items.map((item) => {
+                  if (!item.extras || item.extras.length === 0) {
+                    const defItem = defCat.items.find((di) => di.id === item.id);
+                    if (defItem?.extras) {
+                      return { ...item, extras: defItem.extras };
                     }
-                    return item;
-                  });
-                  categories[existingCatIdx] = { ...categories[existingCatIdx], items: updatedItems };
-                }
+                  }
+                  return item;
+                });
+                categories[existingCatIdx] = { ...categories[existingCatIdx], items: updatedItems };
               }
-              setMenuCategories(categories);
+            }
+            setMenuCategories((prev) => {
+              if (JSON.stringify(prev) === JSON.stringify(categories)) return prev;
+              return categories;
+            });
           }
 
-          // Parse config data
+          // Parse config data (solo actualizar si los datos cambiaron)
           if (data.config_data) {
             let parsedConfig = data.config_data;
             if (typeof parsedConfig === 'string') parsedConfig = JSON.parse(parsedConfig);
             if (parsedConfig && typeof parsedConfig === 'object') {
-              setRestaurantConfig((prev) => ({
-                ...prev,
-                ...parsedConfig,
-                whatsapp: cleanWhatsAppNumber(parsedConfig.whatsapp || prev.whatsapp),
-                deliveryPrice: parsedConfig.deliveryPrice !== undefined ? Number(parsedConfig.deliveryPrice) : (prev.deliveryPrice || 4000),
-              }));
+              setRestaurantConfig((prev) => {
+                const newConf = {
+                  ...prev,
+                  ...parsedConfig,
+                  whatsapp: cleanWhatsAppNumber(parsedConfig.whatsapp || prev.whatsapp),
+                  deliveryPrice: parsedConfig.deliveryPrice !== undefined ? Number(parsedConfig.deliveryPrice) : (prev.deliveryPrice || 4000),
+                };
+                if (JSON.stringify(prev) === JSON.stringify(newConf)) return prev;
+                return newConf;
+              });
             }
           }
 
-          // Parse active orders (Acceso multi-computador)
+          // Parse active orders (Acceso multi-computador con Smart Merge)
           const rawOrders = data.orders_data !== undefined ? data.orders_data : data.config_data?.orders_data;
           if (rawOrders !== undefined && rawOrders !== null) {
             const parsedOrders = typeof rawOrders === 'string' ? JSON.parse(rawOrders) : rawOrders;
             if (Array.isArray(parsedOrders)) {
-              setOrders(parsedOrders);
-              if (typeof window !== 'undefined') {
-                try { localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(parsedOrders)); } catch (e) {}
-              }
+              setOrders((prev) => {
+                const merged = smartMergeOrders(prev, parsedOrders);
+                if (merged === prev) return prev;
+                if (typeof window !== 'undefined') {
+                  try { localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(merged)); } catch (e) {}
+                }
+                return merged;
+              });
             }
           }
 
-          // Parse audit orders (Acceso multi-computador)
+          // Parse audit orders (Acceso multi-computador con Smart Merge)
           const rawAudit = data.audit_orders_data !== undefined ? data.audit_orders_data : data.config_data?.audit_orders_data;
           if (rawAudit !== undefined && rawAudit !== null) {
             const parsedAudit = typeof rawAudit === 'string' ? JSON.parse(rawAudit) : rawAudit;
             if (Array.isArray(parsedAudit)) {
-              setAuditOrders(parsedAudit);
-              if (typeof window !== 'undefined') {
-                try { localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(parsedAudit)); } catch (e) {}
-              }
+              setAuditOrders((prev) => {
+                const merged = smartMergeOrders(prev, parsedAudit);
+                if (merged === prev) return prev;
+                if (typeof window !== 'undefined') {
+                  try { localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(merged)); } catch (e) {}
+                }
+                return merged;
+              });
             }
           }
         }
@@ -601,10 +697,10 @@ export function MenuProvider({ children }) {
 
     loadFromSupabase();
 
-    // Polling periódico cada 5 segundos y Realtime para sincronizar todos los computadores
+    // Polling periódico cada 20 segundos y Realtime para sincronizar todos los computadores
     const pollInterval = setInterval(() => {
       loadFromSupabase();
-    }, 5000);
+    }, 20000);
 
     let channel = null;
     try {
@@ -651,33 +747,18 @@ export function MenuProvider({ children }) {
           const data = await res.json();
           if (data.orders && Array.isArray(data.orders) && data.orders.length > 0) {
             setOrders((prev) => {
-              // Merge: servidor + local sin duplicados (servidor tiene prioridad si tiene updatedAt más reciente)
-              const merged = new Map();
-              prev.forEach(o => merged.set(o.id, o));
-              data.orders.forEach(o => {
-                const existing = merged.get(o.id);
-                if (!existing || (o.updatedAt && o.updatedAt > (existing.updatedAt || ''))) {
-                  merged.set(o.id, o);
-                }
-              });
-              const result = Array.from(merged.values());
-              try { localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(result)); } catch (e) {}
-              return result;
+              const merged = smartMergeOrders(prev, data.orders);
+              if (merged === prev) return prev;
+              try { localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(merged)); } catch (e) {}
+              return merged;
             });
           }
           if (data.auditOrders && Array.isArray(data.auditOrders) && data.auditOrders.length > 0) {
             setAuditOrders((prev) => {
-              const merged = new Map();
-              prev.forEach(o => merged.set(o.id, o));
-              data.auditOrders.forEach(o => {
-                const existing = merged.get(o.id);
-                if (!existing || (o.updatedAt && o.updatedAt > (existing.updatedAt || ''))) {
-                  merged.set(o.id, o);
-                }
-              });
-              const result = Array.from(merged.values());
-              try { localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(result)); } catch (e) {}
-              return result;
+              const merged = smartMergeOrders(prev, data.auditOrders);
+              if (merged === prev) return prev;
+              try { localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(merged)); } catch (e) {}
+              return merged;
             });
           }
         }
@@ -731,9 +812,15 @@ export function MenuProvider({ children }) {
         eventSource.addEventListener('ORDER_UPDATED', (e) => {
           try {
             const { orderId, status, extraMeta, order } = JSON.parse(e.data);
+            const now = Date.now();
+            const protectUntil = recentLocalUpdatesRef.current?.get(orderId) || 0;
+            if (protectUntil > now && order?.updatedAt) {
+              // Si este cliente tiene una actualización más reciente, no retroceder
+              return;
+            }
             const updateFn = (o) =>
               o.id === orderId
-                ? { ...o, ...(status ? { status } : {}), ...(extraMeta || {}), updatedAt: new Date().toISOString() }
+                ? { ...o, ...(status ? { status } : {}), ...(extraMeta || {}), updatedAt: order?.updatedAt || new Date().toISOString() }
                 : o;
             setOrders((prev) => {
               const next = prev.map(updateFn);
@@ -803,37 +890,29 @@ export function MenuProvider({ children }) {
     };
   }, []);
 
-  // ── Sincronizar menú con Supabase ────────────────────────────────
-  useEffect(() => {
-    if (!menuLoaded) return;
-    const saveMenu = async () => {
-      try {
-        await supabase
-          .from('app_state')
-          .update({ menu_data: menuCategories })
-          .eq('id', 'tronos');
-      } catch (error) {
-        console.error('Error saving menu to Supabase:', error);
-      }
-    };
-    saveMenu();
-  }, [menuCategories, menuLoaded]);
+  // ── Sincronización explícita de menú con Supabase (solo ante cambios manuales) ──
+  const saveMenuToSupabase = useCallback(async (categories) => {
+    try {
+      await supabase
+        .from('app_state')
+        .update({ menu_data: categories })
+        .eq('id', 'tronos');
+    } catch (error) {
+      console.warn('Error saving menu to Supabase:', error);
+    }
+  }, []);
 
-  // ── Sincronizar config con Supabase ────────────────────────────────
-  useEffect(() => {
-    if (!menuLoaded) return;
-    const saveConfig = async () => {
-      try {
-        await supabase
-          .from('app_state')
-          .update({ config_data: restaurantConfig })
-          .eq('id', 'tronos');
-      } catch (error) {
-        console.error('Error saving config to Supabase:', error);
-      }
-    };
-    saveConfig();
-  }, [restaurantConfig, menuLoaded]);
+  // ── Sincronización explícita de config con Supabase (solo ante cambios manuales) ──
+  const saveConfigToSupabase = useCallback(async (config) => {
+    try {
+      await supabase
+        .from('app_state')
+        .update({ config_data: config })
+        .eq('id', 'tronos');
+    } catch (error) {
+      console.warn('Error saving config to Supabase:', error);
+    }
+  }, []);
 
   // ── Sincronizar autenticación con localStorage ───────────────────────
   useEffect(() => {
@@ -973,34 +1052,37 @@ export function MenuProvider({ children }) {
 
   // Añadir un nuevo plato a una categoría específica
   const addMenuItem = useCallback((categoryId, item) => {
-    setMenuCategories((prev) =>
-      prev.map((cat) => {
+    setMenuCategories((prev) => {
+      const next = prev.map((cat) => {
         if (cat.id === categoryId) {
           return { ...cat, items: [...cat.items, { ...item, extras: [] }] };
         }
         return cat;
-      })
-    );
-  }, []);
+      });
+      saveMenuToSupabase(next);
+      return next;
+    });
+  }, [saveMenuToSupabase]);
 
   // Eliminar un plato
   const deleteMenuItem = useCallback((categoryId, itemId) => {
-    setMenuCategories((prev) =>
-      prev.map((cat) => {
+    setMenuCategories((prev) => {
+      const next = prev.map((cat) => {
         if (cat.id === categoryId) {
           return { ...cat, items: cat.items.filter((item) => item.id !== itemId) };
         }
         return cat;
-      })
-    );
-    // Remover del carrito
+      });
+      saveMenuToSupabase(next);
+      return next;
+    });
     setCart((prev) => prev.filter((cartItem) => cartItem.id !== itemId));
-  }, []);
+  }, [saveMenuToSupabase]);
 
   // Actualizar un plato
   const updateMenuItem = useCallback((categoryId, updatedItem) => {
-    setMenuCategories((prev) =>
-      prev.map((cat) => {
+    setMenuCategories((prev) => {
+      const next = prev.map((cat) => {
         if (cat.id === categoryId) {
           return {
             ...cat,
@@ -1008,9 +1090,10 @@ export function MenuProvider({ children }) {
           };
         }
         return cat;
-      })
-    );
-    // Actualizar en el carrito si existe
+      });
+      saveMenuToSupabase(next);
+      return next;
+    });
     setCart((prev) =>
       prev.map((cartItem) =>
         cartItem.id === updatedItem.id
@@ -1018,12 +1101,12 @@ export function MenuProvider({ children }) {
           : cartItem
       )
     );
-  }, []);
+  }, [saveMenuToSupabase]);
 
   // Actualizar adicionales de un plato (Admin)
   const updateItemExtras = useCallback((categoryId, itemId, newExtras) => {
-    setMenuCategories((prev) =>
-      prev.map((cat) => {
+    setMenuCategories((prev) => {
+      const next = prev.map((cat) => {
         if (cat.id === categoryId) {
           return {
             ...cat,
@@ -1031,20 +1114,30 @@ export function MenuProvider({ children }) {
           };
         }
         return cat;
-      })
-    );
-  }, []);
+      });
+      saveMenuToSupabase(next);
+      return next;
+    });
+  }, [saveMenuToSupabase]);
 
   // Añadir nueva categoría
   const addCategory = useCallback((category) => {
-    setMenuCategories((prev) => [...prev, category]);
-  }, []);
+    setMenuCategories((prev) => {
+      const next = [...prev, category];
+      saveMenuToSupabase(next);
+      return next;
+    });
+  }, [saveMenuToSupabase]);
 
   // Eliminar categoría (y todos sus platos)
   const deleteCategory = useCallback((categoryId) => {
-    setMenuCategories((prev) => prev.filter((cat) => cat.id !== categoryId));
+    setMenuCategories((prev) => {
+      const next = prev.filter((cat) => cat.id !== categoryId);
+      saveMenuToSupabase(next);
+      return next;
+    });
     setCart((prevCart) => prevCart.filter(item => item.categoryId !== categoryId));
-  }, []);
+  }, [saveMenuToSupabase]);
 
   // ── Funciones de Configuración ─────────────────────────────────────────
   const updateWhatsApp = useCallback((phone) => {

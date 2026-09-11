@@ -34,7 +34,7 @@ export async function GET() {
         // ignore
       }
 
-      // Heartbeat cada 25 segundos para mantener la conexión viva
+      // Heartbeat cada 15 segundos para mantener la conexión viva
       const heartbeat = setInterval(() => {
         try {
           controller.enqueue(
@@ -44,7 +44,7 @@ export async function GET() {
           clearInterval(heartbeat);
           removeSSEClient(controller);
         }
-      }, 25000);
+      }, 15000);
 
       // Limpiar cuando se cierre la conexión
       controller._heartbeat = heartbeat;
