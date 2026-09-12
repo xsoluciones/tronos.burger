@@ -39,7 +39,7 @@ export default function OrderForm({ onClose }) {
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (isSubmitting) return;
     if (!validate()) return;
@@ -105,30 +105,40 @@ export default function OrderForm({ onClose }) {
     const whatsappNumber = cleanWhatsAppNumber(rawNumber);
     const url = `https://wa.me/${whatsappNumber}?text=${encoded}`;
 
-    window.open(url, '_blank');
-
-    // Registrar pedido en el sistema POS
+    // Registrar pedido en el sistema POS antes de abrir WhatsApp
     if (addOrder) {
-      addOrder({
-        id: orderId,
-        date: new Date().toISOString(),
-        orderType: orderType,
-        deliveryFee: deliveryFee,
-        customer: {
-          nombre: form.nombre.trim(),
-          telefono: form.telefono.trim(),
-          direccion: orderType === 'domicilio' ? form.direccion.trim() : '🏪 Recoge en local (Yo lo voy a buscar)',
-          descripcion: orderType === 'domicilio' ? form.descripcion.trim() : 'Yo lo voy a buscar',
-        },
-        items: JSON.parse(JSON.stringify(cart)),
-        total: finalTotal,
-        status: 'pendiente',
-      });
+      try {
+        await addOrder({
+          id: orderId,
+          date: new Date().toISOString(),
+          orderType: orderType,
+          deliveryFee: deliveryFee,
+          customer: {
+            nombre: form.nombre.trim(),
+            telefono: form.telefono.trim(),
+            direccion: orderType === 'domicilio' ? form.direccion.trim() : '🏪 Recoge en local (Yo lo voy a buscar)',
+            descripcion: orderType === 'domicilio' ? form.descripcion.trim() : 'Yo lo voy a buscar',
+          },
+          items: JSON.parse(JSON.stringify(cart)),
+          total: finalTotal,
+          status: 'pendiente',
+        });
+      } catch (err) {
+        console.error('[OrderForm] Error al registrar pedido:', err);
+      }
+    }
+
+    // Abrir WhatsApp con el pedido
+    try {
+      window.open(url, '_blank');
+    } catch (e) {
+      window.location.href = url;
     }
 
     // Limpiar carrito y mostrar modal con botón de seguimiento
     clearCart();
     setSuccess(true);
+    setIsSubmitting(false);
   };
 
   return (

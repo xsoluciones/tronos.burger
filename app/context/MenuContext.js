@@ -405,7 +405,7 @@ export function MenuProvider({ children }) {
     }
   }, []);
 
-  const addOrder = useCallback((newOrder) => {
+  const addOrder = useCallback(async (newOrder) => {
     if (!newOrder || !newOrder.id) return;
 
     // Evitar procesar pedidos duplicados si ya existen con el mismo ID
@@ -449,8 +449,73 @@ export function MenuProvider({ children }) {
       }
     }
 
-    saveOrdersToSupabase(nextOrders, nextAudit);
-  }, [orders, auditOrders, saveOrdersToSupabase]);
+    // 1) Enviar inmediatamente a /api/orders (esto difunde SSE 'NEW_ORDER' en tiempo real a Admin, Cocina y Caja)
+    if (typeof window !== 'undefined') {
+      try {
+        await fetch('/api/orders', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ order: orderWithMeta }),
+        });
+      } catch (err) {
+        console.warn('[MenuContext] Error enviando a /api/orders:', err);
+      }
+    }
+
+    // 2) Sincronizar en Supabase garantizando fusión segura con los pedidos remotos
+    try {
+      const { data: supaData } = await supabase
+        .from('app_state')
+        .select('orders_data, audit_orders_data')
+        .eq('id', 'tronos')
+        .single();
+
+      let remoteOrders = [];
+      let remoteAudit = [];
+      if (supaData) {
+        remoteOrders = supaData.orders_data || [];
+        if (typeof remoteOrders === 'string') {
+          try { remoteOrders = JSON.parse(remoteOrders); } catch (e) {}
+        }
+        remoteAudit = supaData.audit_orders_data || [];
+        if (typeof remoteAudit === 'string') {
+          try { remoteAudit = JSON.parse(remoteAudit); } catch (e) {}
+        }
+      }
+
+      const mergedActive = [
+        orderWithMeta,
+        ...(Array.isArray(remoteOrders) ? remoteOrders : []).filter(
+          (o) => o && o.id !== orderWithMeta.id && o.status !== 'anulado_admin'
+        ),
+      ];
+
+      const mergedAudit = [
+        orderWithMeta,
+        ...(Array.isArray(remoteAudit) ? remoteAudit : []).filter(
+          (o) => o && o.id !== orderWithMeta.id
+        ),
+      ];
+
+      const supaPromise = supabase
+        .from('app_state')
+        .update({
+          orders_data: mergedActive,
+          audit_orders_data: mergedAudit,
+        })
+        .eq('id', 'tronos');
+
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Timeout Supabase Orders (5s)')), 5000)
+      );
+
+      await Promise.race([supaPromise, timeoutPromise]);
+    } catch (e) {
+      console.warn('[MenuContext] Error guardando pedido en Supabase:', e?.message);
+    }
+
+    return orderWithMeta;
+  }, [orders, auditOrders]);
 
   const updateOrderStatus = useCallback((orderId, status, extraMeta = {}) => {
     const now = new Date().toISOString();
@@ -810,10 +875,10 @@ export function MenuProvider({ children }) {
 
     loadFromSupabase();
 
-    // Polling periódico cada 20 segundos y Realtime para sincronizar todos los computadores
+    // Polling periódico cada 3.5 segundos y Realtime para sincronizar todos los computadores
     const pollInterval = setInterval(() => {
       loadFromSupabase();
-    }, 20000);
+    }, 3500);
 
     let channel = null;
     try {
@@ -977,6 +1042,28 @@ export function MenuProvider({ children }) {
           } catch (err) {}
         });
 
+        eventSource.addEventListener('ORDERS_SYNCED', (e) => {
+          try {
+            const data = JSON.parse(e.data);
+            if (data.orders && Array.isArray(data.orders)) {
+              setOrders((prev) => {
+                const merged = smartMergeOrders(prev, data.orders);
+                if (merged === prev) return prev;
+                try { localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(merged)); } catch (err) {}
+                return merged;
+              });
+            }
+            if (data.auditOrders && Array.isArray(data.auditOrders)) {
+              setAuditOrders((prev) => {
+                const merged = smartMergeOrders(prev, data.auditOrders);
+                if (merged === prev) return prev;
+                try { localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(merged)); } catch (err) {}
+                return merged;
+              });
+            }
+          } catch (err) {}
+        });
+
         eventSource.onerror = () => {
           if (eventSource) eventSource.close();
           eventSource = null;
@@ -996,10 +1083,16 @@ export function MenuProvider({ children }) {
     initSync();
     connectSSE();
 
+    // Polling periódico de respaldo al servidor cada 3.5 segundos
+    const serverPollInterval = setInterval(() => {
+      if (isMounted) initSync();
+    }, 3500);
+
     return () => {
       isMounted = false;
       if (eventSource) eventSource.close();
       if (reconnectTimeout) clearTimeout(reconnectTimeout);
+      clearInterval(serverPollInterval);
     };
   }, []);
 

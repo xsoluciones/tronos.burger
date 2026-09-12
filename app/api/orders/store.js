@@ -303,6 +303,7 @@ export async function bulkSyncOrders(newOrders, newAudit, shouldSyncSupabase = t
 
   if (changed) {
     await persist(shouldSyncSupabase);
+    broadcast('ORDERS_SYNCED', { orders, auditOrders });
   }
 }
 
