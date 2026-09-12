@@ -1704,7 +1704,7 @@ export default function AdminPOSPage() {
 
   const handleSaveEdit = (e) => {
     e.preventDefault();
-    if (!editingItem.name.trim() || !editingItem.description.trim() || isNaN(editingItem.price)) {
+    if (!editingItem.name?.trim() || !editingItem.description?.trim() || isNaN(editingItem.price)) {
       showToast('Datos inválidos.', 'error');
       return;
     }
@@ -1712,9 +1712,9 @@ export default function AdminPOSPage() {
       id: editingItem.id,
       name: editingItem.name.trim(),
       description: editingItem.description.trim(),
-      detailedDescription: editingItem.detailedDescription.trim(),
+      detailedDescription: (editingItem.detailedDescription || '').trim(),
       price: parseFloat(editingItem.price),
-      image: editingItem.image.trim(),
+      image: (editingItem.image || '').trim(),
       categoryId: editingItem.categoryId,
     });
     setEditingItemId(null);
@@ -4958,7 +4958,8 @@ export default function AdminPOSPage() {
                                         </button>
                                       </div>
                                       <div className="row g-2">
-                                        <div className="col-12 col-md-5">
+                                        <div className="col-12 col-md-4">
+                                          <label style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Nombre</label>
                                           <input
                                             type="text"
                                             value={editingItem.name}
@@ -4969,6 +4970,7 @@ export default function AdminPOSPage() {
                                           />
                                         </div>
                                         <div className="col-12 col-md-3">
+                                          <label style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Precio ($ COP)</label>
                                           <input
                                             type="number"
                                             value={editingItem.price}
@@ -4978,11 +4980,17 @@ export default function AdminPOSPage() {
                                             required
                                           />
                                         </div>
-                                        <div className="col-12 col-md-4 text-end">
-                                          <button type="button" onClick={() => setEditingItemId(null)} className="btn btn-sm btn-outline-secondary me-1" style={{ fontSize: '11.5px' }}>Cancelar</button>
-                                          <button type="submit" className="btn btn-sm fw-bold" style={{ background: 'var(--primary-btn-bg)', color: 'var(--primary-btn-text)', fontSize: '11.5px' }}>Guardar</button>
+                                        <div className="col-12 col-md-5">
+                                          <label style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Cambiar Foto (archivo)</label>
+                                          <input
+                                            type="file"
+                                            accept="image/*"
+                                            className="form-control form-control-sm"
+                                            onChange={(e) => handleImageUpload(e, setEditingItem)}
+                                          />
                                         </div>
                                         <div className="col-12">
+                                          <label style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Descripción / Ingredientes</label>
                                           <input
                                             type="text"
                                             value={editingItem.description}
@@ -4991,6 +4999,10 @@ export default function AdminPOSPage() {
                                             placeholder="Descripción"
                                             required
                                           />
+                                        </div>
+                                        <div className="col-12 text-end mt-1">
+                                          <button type="button" onClick={() => setEditingItemId(null)} className="btn btn-sm btn-outline-secondary me-2" style={{ fontSize: '11.5px' }}>Cancelar</button>
+                                          <button type="submit" className="btn btn-sm fw-bold" style={{ background: 'var(--primary-btn-bg)', color: 'var(--primary-btn-text)', fontSize: '11.5px', padding: '5px 16px' }}>Guardar Cambios</button>
                                         </div>
                                       </div>
                                     </form>

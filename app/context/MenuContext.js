@@ -385,43 +385,25 @@ export function MenuProvider({ children }) {
       } catch (e) {}
     }
 
-    // 2) Sincronizar directo con Supabase con reintentos para garantizar guardado
-    let attempts = 0;
-    let success = false;
-    while (attempts < 3 && !success) {
-      attempts++;
-      try {
-        const { data, error } = await supabase
-          .from('app_state')
-          .update({
-            orders_data: cleanActiveOrders,
-            audit_orders_data: cleanAuditOrders,
-          })
-          .eq('id', 'tronos')
-          .select();
+    // 2) Sincronizar directo con Supabase con timeout de seguridad
+    try {
+      const supaPromise = supabase
+        .from('app_state')
+        .update({
+          orders_data: cleanActiveOrders,
+          audit_orders_data: cleanAuditOrders,
+        })
+        .eq('id', 'tronos');
 
-        if (!error && data) {
-          success = true;
-          break;
-        }
-        if (error) {
-          await supabase
-            .from('app_state')
-            .update({
-              config_data: {
-                ...restaurantConfig,
-                orders_data: cleanActiveOrders,
-                audit_orders_data: cleanAuditOrders,
-              },
-            })
-            .eq('id', 'tronos');
-        }
-      } catch (e) {}
-      if (!success && attempts < 3) {
-        await new Promise((r) => setTimeout(r, 600));
-      }
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Timeout Supabase Orders (5s)')), 5000)
+      );
+
+      await Promise.race([supaPromise, timeoutPromise]);
+    } catch (e) {
+      console.warn('[MenuContext] Error guardando pedidos en Supabase:', e?.message);
     }
-  }, [restaurantConfig]);
+  }, []);
 
   const addOrder = useCallback((newOrder) => {
     if (!newOrder || !newOrder.id) return;
@@ -440,96 +422,81 @@ export function MenuProvider({ children }) {
 
     recentLocalUpdatesRef.current.set(orderWithMeta.id, Date.now() + 30000);
 
-    let nextOrders = [];
-    let nextAudit = [];
+    const currentOrders = Array.isArray(orders) ? orders : [];
+    const currentAudit = Array.isArray(auditOrders) ? auditOrders : [];
 
-    setOrders((prev) => {
-      // Si ya existe en la lista, actualizarlo sin duplicar
-      const filtered = prev.filter((o) => o.id !== orderWithMeta.id);
-      nextOrders = [orderWithMeta, ...filtered];
-      if (typeof window !== 'undefined') {
+    const filteredOrders = currentOrders.filter((o) => o && o.id !== orderWithMeta.id);
+    const nextOrders = [orderWithMeta, ...filteredOrders];
+
+    const filteredAudit = currentAudit.filter((o) => o && o.id !== orderWithMeta.id);
+    const nextAudit = [orderWithMeta, ...filteredAudit];
+
+    setOrders(nextOrders);
+    setAuditOrders(nextAudit);
+
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(nextOrders));
+        localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(nextAudit));
+      } catch (e) {}
+
+      if ('BroadcastChannel' in window) {
         try {
-          localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(nextOrders));
+          const channel = new BroadcastChannel('tronos_orders_channel');
+          channel.postMessage({ type: 'NEW_ORDER_ALERT', order: orderWithMeta });
+          channel.close();
         } catch (e) {}
       }
-      return nextOrders;
-    });
-
-    setAuditOrders((prev) => {
-      const filtered = prev.filter((o) => o.id !== orderWithMeta.id);
-      nextAudit = [orderWithMeta, ...filtered];
-      if (typeof window !== 'undefined') {
-        try {
-          localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(nextAudit));
-        } catch (e) {}
-      }
-      return nextAudit;
-    });
+    }
 
     saveOrdersToSupabase(nextOrders, nextAudit);
-
-    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
-      try {
-        const channel = new BroadcastChannel('tronos_orders_channel');
-        channel.postMessage({ type: 'NEW_ORDER_ALERT', order: orderWithMeta });
-        channel.close();
-      } catch (e) {}
-    }
-  }, [saveOrdersToSupabase]);
+  }, [orders, auditOrders, saveOrdersToSupabase]);
 
   const updateOrderStatus = useCallback((orderId, status, extraMeta = {}) => {
     const now = new Date().toISOString();
     recentLocalUpdatesRef.current.set(orderId, Date.now() + 15000);
 
-    let nextOrders = [];
-    let nextAudit = [];
+    const currentOrders = Array.isArray(orders) ? orders : [];
+    const currentAudit = Array.isArray(auditOrders) ? auditOrders : [];
 
-    setOrders((prev) => {
-      nextOrders = prev.map((o) =>
-        o.id === orderId
-          ? { ...o, ...(status ? { status } : {}), ...extraMeta, updatedAt: now }
-          : o
-      );
-      if (typeof window !== 'undefined') {
-        try {
-          localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(nextOrders));
-        } catch (e) {}
-      }
-      return nextOrders;
-    });
+    const nextOrders = currentOrders.map((o) =>
+      o && o.id === orderId
+        ? { ...o, ...(status ? { status } : {}), ...extraMeta, updatedAt: now }
+        : o
+    );
 
-    setAuditOrders((prev) => {
-      nextAudit = prev.map((o) =>
-        o.id === orderId
-          ? { ...o, ...(status ? { status } : {}), ...extraMeta, updatedAt: now }
-          : o
-      );
-      if (typeof window !== 'undefined') {
-        try {
-          localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(nextAudit));
-        } catch (e) {}
-      }
-      return nextAudit;
-    });
+    const nextAudit = currentAudit.map((o) =>
+      o && o.id === orderId
+        ? { ...o, ...(status ? { status } : {}), ...extraMeta, updatedAt: now }
+        : o
+    );
 
-    saveOrdersToSupabase(nextOrders, nextAudit);
-
-    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
-      try {
-        const channel = new BroadcastChannel('tronos_orders_channel');
-        channel.postMessage({ type: 'STATUS_UPDATED', orderId, status });
-        channel.close();
-      } catch (e) {}
-    }
+    setOrders(nextOrders);
+    setAuditOrders(nextAudit);
 
     if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(nextOrders));
+        localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(nextAudit));
+      } catch (e) {}
+
+      if ('BroadcastChannel' in window) {
+        try {
+          const channel = new BroadcastChannel('tronos_orders_channel');
+          channel.postMessage({ type: 'STATUS_UPDATED', orderId, status });
+          channel.close();
+        } catch (e) {}
+      }
+
       fetch('/api/orders', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ orderId, status, extraMeta }),
       }).catch((e) => console.error('[MenuContext] Error actualizando pedido en servidor:', e));
     }
-  }, [saveOrdersToSupabase]);
+
+    saveOrdersToSupabase(nextOrders, nextAudit);
+  }, [orders, auditOrders, saveOrdersToSupabase]);
 
   const markOrderInvoiced = useCallback((orderId, invoiceDetails = {}) => {
     updateOrderStatus(orderId, undefined, {
@@ -559,11 +526,8 @@ export function MenuProvider({ children }) {
     };
 
     let updatedOrder = null;
-    let nextOrders = [];
-    let nextAudit = [];
-
     const applyAddition = (o) => {
-      if (o.id !== orderId) return o;
+      if (!o || o.id !== orderId) return o;
       const newItems = [...(o.items || []), newItem];
       const newSubtotal = newItems.reduce((sum, it) => {
         const extrasTotal = (it.selectedExtras || []).reduce((s, e) => s + ((e.price || 0) * (e.quantity || 1)), 0);
@@ -584,33 +548,29 @@ export function MenuProvider({ children }) {
       return mod;
     };
 
-    setOrders((prev) => {
-      nextOrders = prev.map(applyAddition);
-      if (typeof window !== 'undefined') {
-        try { localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(nextOrders)); } catch (e) {}
-      }
-      return nextOrders;
-    });
+    const currentOrders = Array.isArray(orders) ? orders : [];
+    const currentAudit = Array.isArray(auditOrders) ? auditOrders : [];
 
-    setAuditOrders((prev) => {
-      nextAudit = prev.map(applyAddition);
-      if (typeof window !== 'undefined') {
-        try { localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(nextAudit)); } catch (e) {}
-      }
-      return nextAudit;
-    });
+    const nextOrders = currentOrders.map(applyAddition);
+    const nextAudit = currentAudit.map(applyAddition);
 
-    saveOrdersToSupabase(nextOrders, nextAudit);
-
-    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
-      try {
-        const channel = new BroadcastChannel('tronos_orders_channel');
-        channel.postMessage({ type: 'ORDER_CUSTOMIZED', orderId, order: updatedOrder });
-        channel.close();
-      } catch (e) {}
-    }
+    setOrders(nextOrders);
+    setAuditOrders(nextAudit);
 
     if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(nextOrders));
+        localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(nextAudit));
+      } catch (e) {}
+
+      if ('BroadcastChannel' in window) {
+        try {
+          const channel = new BroadcastChannel('tronos_orders_channel');
+          channel.postMessage({ type: 'ORDER_CUSTOMIZED', orderId, order: updatedOrder });
+          channel.close();
+        } catch (e) {}
+      }
+
       fetch('/api/orders', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -626,46 +586,50 @@ export function MenuProvider({ children }) {
       }).catch((e) => console.error('[MenuContext] Error enviando actualización personalizada al servidor:', e));
     }
 
+    saveOrdersToSupabase(nextOrders, nextAudit);
+
     return updatedOrder;
-  }, [saveOrdersToSupabase]);
+  }, [orders, auditOrders, saveOrdersToSupabase]);
 
   // Solo Administrador puede anular o eliminar
   const deleteOrder = useCallback((orderId, motivo = 'Anulado por Administrador') => {
     deletedOrderIdsRef.current.add(orderId);
     recentLocalUpdatesRef.current.set(orderId, Date.now() + 30000);
 
-    let nextOrders = [];
-    let nextAudit = [];
+    const currentOrders = Array.isArray(orders) ? orders : [];
+    const currentAudit = Array.isArray(auditOrders) ? auditOrders : [];
 
-    setOrders((prev) => {
-      nextOrders = prev.filter((o) => o.id !== orderId);
-      if (typeof window !== 'undefined') {
+    const nextOrders = currentOrders.filter((o) => o && o.id !== orderId);
+    const nextAudit = currentAudit.map((o) =>
+      o && o.id === orderId
+        ? {
+            ...o,
+            status: 'anulado_admin',
+            anuladoAt: new Date().toISOString(),
+            anuladoMotivo: motivo,
+            updatedAt: new Date().toISOString(),
+          }
+        : o
+    );
+
+    setOrders(nextOrders);
+    setAuditOrders(nextAudit);
+
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(nextOrders));
+        localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(nextAudit));
+      } catch (e) {}
+
+      if ('BroadcastChannel' in window) {
         try {
-          localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(nextOrders));
+          const ch = new BroadcastChannel('tronos_orders_channel');
+          ch.postMessage({ type: 'SYNC_ORDERS', data: nextOrders });
+          ch.postMessage({ type: 'SYNC_AUDIT', data: nextAudit });
+          ch.close();
         } catch (e) {}
       }
-      return nextOrders;
-    });
-
-    setAuditOrders((prev) => {
-      nextAudit = prev.map((o) =>
-        o.id === orderId
-          ? {
-              ...o,
-              status: 'anulado_admin',
-              anuladoAt: new Date().toISOString(),
-              anuladoMotivo: motivo,
-              updatedAt: new Date().toISOString(),
-            }
-          : o
-      );
-      if (typeof window !== 'undefined') {
-        try {
-          localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(nextAudit));
-        } catch (e) {}
-      }
-      return nextAudit;
-    });
+    }
 
     saveOrdersToSupabase(nextOrders, nextAudit);
 
@@ -676,31 +640,37 @@ export function MenuProvider({ children }) {
         body: JSON.stringify({ action: 'delete', orderId, motivo }),
       }).catch((e) => console.error('[MenuContext] Error eliminando pedido en servidor:', e));
     }
-  }, [saveOrdersToSupabase]);
+  }, [orders, auditOrders, saveOrdersToSupabase]);
 
   // Purga física definitiva de auditoría (solo Admin)
   const purgeAuditOrder = useCallback((orderId) => {
     deletedOrderIdsRef.current.add(orderId);
     recentLocalUpdatesRef.current.set(orderId, Date.now() + 30000);
 
-    let nextOrders = [];
-    let nextAudit = [];
+    const currentOrders = Array.isArray(orders) ? orders : [];
+    const currentAudit = Array.isArray(auditOrders) ? auditOrders : [];
 
-    setOrders((prev) => {
-      nextOrders = prev.filter((o) => o.id !== orderId);
-      if (typeof window !== 'undefined') {
-        try { localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(nextOrders)); } catch (e) {}
-      }
-      return nextOrders;
-    });
+    const nextOrders = currentOrders.filter((o) => o && o.id !== orderId);
+    const nextAudit = currentAudit.filter((o) => o && o.id !== orderId);
 
-    setAuditOrders((prev) => {
-      nextAudit = prev.filter((o) => o.id !== orderId);
-      if (typeof window !== 'undefined') {
-        try { localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(nextAudit)); } catch (e) {}
+    setOrders(nextOrders);
+    setAuditOrders(nextAudit);
+
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(nextOrders));
+        localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(nextAudit));
+      } catch (e) {}
+
+      if ('BroadcastChannel' in window) {
+        try {
+          const ch = new BroadcastChannel('tronos_orders_channel');
+          ch.postMessage({ type: 'SYNC_ORDERS', data: nextOrders });
+          ch.postMessage({ type: 'SYNC_AUDIT', data: nextAudit });
+          ch.close();
+        } catch (e) {}
       }
-      return nextAudit;
-    });
+    }
 
     saveOrdersToSupabase(nextOrders, nextAudit);
 
@@ -711,7 +681,7 @@ export function MenuProvider({ children }) {
         body: JSON.stringify({ action: 'purge', orderId }),
       }).catch((e) => console.error('[MenuContext] Error purgando pedido en servidor:', e));
     }
-  }, [saveOrdersToSupabase]);
+  }, [orders, auditOrders, saveOrdersToSupabase]);
 
   // ── Limpiar y reiniciar todos los datos a cero (borrado completo) ──
   const resetAllOrdersData = useCallback(() => {
@@ -1071,31 +1041,28 @@ export function MenuProvider({ children }) {
       }
     }
 
-    // 4) Sincronizar directo con Supabase con reintentos
+    // 4) Sincronizar directo con Supabase con protección de timeout
     let supaOk = false;
     let supaError = null;
-    let attempts = 0;
 
-    while (attempts < 3 && !supaOk) {
-      attempts++;
-      try {
-        const { data, error } = await supabase
-          .from('app_state')
-          .update({ menu_data: categories })
-          .eq('id', 'tronos')
-          .select();
+    try {
+      const supaPromise = supabase
+        .from('app_state')
+        .update({ menu_data: categories })
+        .eq('id', 'tronos');
 
-        if (!error && data) {
-          supaOk = true;
-          break;
-        }
-        if (error) supaError = error.message;
-      } catch (err) {
-        supaError = err?.message || 'Error de conexión';
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Tiempo de espera agotado con Supabase (5s)')), 5000)
+      );
+
+      const res = await Promise.race([supaPromise, timeoutPromise]);
+      if (!res?.error) {
+        supaOk = true;
+      } else {
+        supaError = res.error?.message;
       }
-      if (!supaOk && attempts < 3) {
-        await new Promise((r) => setTimeout(r, 600));
-      }
+    } catch (err) {
+      supaError = err?.message || 'Error de conexión';
     }
 
     return {
@@ -1154,33 +1121,31 @@ export function MenuProvider({ children }) {
 
     let supaOk = false;
     let supaError = null;
-    let attempts = 0;
 
-    while (attempts < 3 && !supaOk) {
-      attempts++;
-      try {
-        const { data, error } = await supabase
-          .from('app_state')
-          .update({
-            menu_data: menuCategories,
-            config_data: restaurantConfig,
-            orders_data: cleanActiveOrders,
-            audit_orders_data: cleanAuditOrders,
-          })
-          .eq('id', 'tronos')
-          .select();
+    try {
+      // Timeout estricto de 6 segundos para no congelar la interfaz si Supabase demora
+      const supaPromise = supabase
+        .from('app_state')
+        .update({
+          menu_data: menuCategories,
+          config_data: restaurantConfig,
+          orders_data: cleanActiveOrders,
+          audit_orders_data: cleanAuditOrders,
+        })
+        .eq('id', 'tronos');
 
-        if (!error && data) {
-          supaOk = true;
-          break;
-        }
-        if (error) supaError = error.message;
-      } catch (err) {
-        supaError = err?.message || 'Error de conexión con Supabase';
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Tiempo de espera agotado con Supabase (6s)')), 6000)
+      );
+
+      const res = await Promise.race([supaPromise, timeoutPromise]);
+      if (!res?.error) {
+        supaOk = true;
+      } else {
+        supaError = res.error?.message;
       }
-      if (!supaOk && attempts < 3) {
-        await new Promise((r) => setTimeout(r, 600));
-      }
+    } catch (err) {
+      supaError = err?.message || 'Conexión lenta con Supabase';
     }
 
     return {
@@ -1342,66 +1307,63 @@ export function MenuProvider({ children }) {
   // Añadir un nuevo plato a una categoría específica
   const addMenuItem = useCallback(async (categoryId, item) => {
     recentMenuUpdateRef.current = Date.now() + 30000;
-    let nextCategories = [];
-    setMenuCategories((prev) => {
-      nextCategories = prev.map((cat) => {
-        if (cat.id === categoryId) {
-          const itemToAdd = {
-            ...item,
-            categoryId,
-            extras: Array.isArray(item.extras) ? item.extras : [],
-          };
-          return { ...cat, items: [...(cat.items || []), itemToAdd] };
-        }
-        return cat;
-      });
-      if (typeof window !== 'undefined') {
-        try { localStorage.setItem(STORAGE_KEY_MENU, JSON.stringify(nextCategories)); } catch (e) {}
+    const currentCats = Array.isArray(menuCategories) ? menuCategories : [];
+    const nextCategories = currentCats.map((cat) => {
+      if (cat.id === categoryId) {
+        const itemToAdd = {
+          ...item,
+          categoryId,
+          extras: Array.isArray(item.extras) ? item.extras : [],
+        };
+        return { ...cat, items: [...(cat.items || []), itemToAdd] };
       }
-      return nextCategories;
+      return cat;
     });
+
+    setMenuCategories(nextCategories);
+    if (typeof window !== 'undefined') {
+      try { localStorage.setItem(STORAGE_KEY_MENU, JSON.stringify(nextCategories)); } catch (e) {}
+    }
     return await saveMenuToSupabase(nextCategories);
-  }, [saveMenuToSupabase]);
+  }, [menuCategories, saveMenuToSupabase]);
 
   // Eliminar un plato
   const deleteMenuItem = useCallback(async (categoryId, itemId) => {
     recentMenuUpdateRef.current = Date.now() + 30000;
-    let nextCategories = [];
-    setMenuCategories((prev) => {
-      nextCategories = prev.map((cat) => {
-        if (cat.id === categoryId) {
-          return { ...cat, items: (cat.items || []).filter((item) => item.id !== itemId) };
-        }
-        return cat;
-      });
-      if (typeof window !== 'undefined') {
-        try { localStorage.setItem(STORAGE_KEY_MENU, JSON.stringify(nextCategories)); } catch (e) {}
+    const currentCats = Array.isArray(menuCategories) ? menuCategories : [];
+    const nextCategories = currentCats.map((cat) => {
+      if (cat.id === categoryId) {
+        return { ...cat, items: (cat.items || []).filter((item) => item.id !== itemId) };
       }
-      return nextCategories;
+      return cat;
     });
+
+    setMenuCategories(nextCategories);
+    if (typeof window !== 'undefined') {
+      try { localStorage.setItem(STORAGE_KEY_MENU, JSON.stringify(nextCategories)); } catch (e) {}
+    }
     setCart((prev) => prev.filter((cartItem) => cartItem.id !== itemId));
     return await saveMenuToSupabase(nextCategories);
-  }, [saveMenuToSupabase]);
+  }, [menuCategories, saveMenuToSupabase]);
 
   // Actualizar un plato
   const updateMenuItem = useCallback(async (categoryId, updatedItem) => {
     recentMenuUpdateRef.current = Date.now() + 30000;
-    let nextCategories = [];
-    setMenuCategories((prev) => {
-      nextCategories = prev.map((cat) => {
-        if (cat.id === categoryId) {
-          return {
-            ...cat,
-            items: (cat.items || []).map((item) => (item.id === updatedItem.id ? { ...item, ...updatedItem } : item)),
-          };
-        }
-        return cat;
-      });
-      if (typeof window !== 'undefined') {
-        try { localStorage.setItem(STORAGE_KEY_MENU, JSON.stringify(nextCategories)); } catch (e) {}
+    const currentCats = Array.isArray(menuCategories) ? menuCategories : [];
+    const nextCategories = currentCats.map((cat) => {
+      if (cat.id === categoryId) {
+        return {
+          ...cat,
+          items: (cat.items || []).map((item) => (item.id === updatedItem.id ? { ...item, ...updatedItem } : item)),
+        };
       }
-      return nextCategories;
+      return cat;
     });
+
+    setMenuCategories(nextCategories);
+    if (typeof window !== 'undefined') {
+      try { localStorage.setItem(STORAGE_KEY_MENU, JSON.stringify(nextCategories)); } catch (e) {}
+    }
     setCart((prev) =>
       prev.map((cartItem) =>
         cartItem.id === updatedItem.id
@@ -1410,58 +1372,55 @@ export function MenuProvider({ children }) {
       )
     );
     return await saveMenuToSupabase(nextCategories);
-  }, [saveMenuToSupabase]);
+  }, [menuCategories, saveMenuToSupabase]);
 
   // Actualizar adicionales de un plato (Admin)
   const updateItemExtras = useCallback(async (categoryId, itemId, newExtras) => {
     recentMenuUpdateRef.current = Date.now() + 30000;
-    let nextCategories = [];
-    setMenuCategories((prev) => {
-      nextCategories = prev.map((cat) => {
-        if (cat.id === categoryId) {
-          return {
-            ...cat,
-            items: (cat.items || []).map((item) => (item.id === itemId ? { ...item, extras: newExtras } : item)),
-          };
-        }
-        return cat;
-      });
-      if (typeof window !== 'undefined') {
-        try { localStorage.setItem(STORAGE_KEY_MENU, JSON.stringify(nextCategories)); } catch (e) {}
+    const currentCats = Array.isArray(menuCategories) ? menuCategories : [];
+    const nextCategories = currentCats.map((cat) => {
+      if (cat.id === categoryId) {
+        return {
+          ...cat,
+          items: (cat.items || []).map((item) => (item.id === itemId ? { ...item, extras: newExtras } : item)),
+        };
       }
-      return nextCategories;
+      return cat;
     });
+
+    setMenuCategories(nextCategories);
+    if (typeof window !== 'undefined') {
+      try { localStorage.setItem(STORAGE_KEY_MENU, JSON.stringify(nextCategories)); } catch (e) {}
+    }
     return await saveMenuToSupabase(nextCategories);
-  }, [saveMenuToSupabase]);
+  }, [menuCategories, saveMenuToSupabase]);
 
   // Añadir nueva categoría
   const addCategory = useCallback(async (category) => {
     recentMenuUpdateRef.current = Date.now() + 30000;
-    let nextCategories = [];
-    setMenuCategories((prev) => {
-      nextCategories = [...prev, category];
-      if (typeof window !== 'undefined') {
-        try { localStorage.setItem(STORAGE_KEY_MENU, JSON.stringify(nextCategories)); } catch (e) {}
-      }
-      return nextCategories;
-    });
+    const currentCats = Array.isArray(menuCategories) ? menuCategories : [];
+    const nextCategories = [...currentCats, category];
+
+    setMenuCategories(nextCategories);
+    if (typeof window !== 'undefined') {
+      try { localStorage.setItem(STORAGE_KEY_MENU, JSON.stringify(nextCategories)); } catch (e) {}
+    }
     return await saveMenuToSupabase(nextCategories);
-  }, [saveMenuToSupabase]);
+  }, [menuCategories, saveMenuToSupabase]);
 
   // Eliminar categoría (y todos sus platos)
   const deleteCategory = useCallback(async (categoryId) => {
     recentMenuUpdateRef.current = Date.now() + 30000;
-    let nextCategories = [];
-    setMenuCategories((prev) => {
-      nextCategories = prev.filter((cat) => cat.id !== categoryId);
-      if (typeof window !== 'undefined') {
-        try { localStorage.setItem(STORAGE_KEY_MENU, JSON.stringify(nextCategories)); } catch (e) {}
-      }
-      return nextCategories;
-    });
+    const currentCats = Array.isArray(menuCategories) ? menuCategories : [];
+    const nextCategories = currentCats.filter((cat) => cat.id !== categoryId);
+
+    setMenuCategories(nextCategories);
+    if (typeof window !== 'undefined') {
+      try { localStorage.setItem(STORAGE_KEY_MENU, JSON.stringify(nextCategories)); } catch (e) {}
+    }
     setCart((prevCart) => prevCart.filter(item => item.categoryId !== categoryId));
     return await saveMenuToSupabase(nextCategories);
-  }, [saveMenuToSupabase]);
+  }, [menuCategories, saveMenuToSupabase]);
 
   // ── Funciones de Configuración ─────────────────────────────────────────
   const updateWhatsApp = useCallback((phone) => {
