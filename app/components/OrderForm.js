@@ -17,6 +17,7 @@ export default function OrderForm({ onClose }) {
   const [errors, setErrors] = useState({});
   const [success, setSuccess] = useState(false);
   const [orderIdCreated, setOrderIdCreated] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -40,10 +41,12 @@ export default function OrderForm({ onClose }) {
 
   const handleSubmit = (e) => {
     e.preventDefault();
+    if (isSubmitting) return;
     if (!validate()) return;
+    setIsSubmitting(true);
 
-    // Generar ID único de comanda
-    const orderId = `TRN-${Date.now().toString().slice(-4)}`;
+    // Generar ID único de comanda (sin colisiones ni duplicados)
+    const orderId = `TRN-${Date.now().toString().slice(-6)}-${Math.floor(100 + Math.random() * 900)}`;
     setOrderIdCreated(orderId);
 
     const origin = typeof window !== 'undefined' ? window.location.origin : 'https://tronospub.com';
@@ -417,8 +420,16 @@ export default function OrderForm({ onClose }) {
                 </div>
 
                 {/* Submit */}
-                <button type="submit" style={styles.submitBtn}>
-                  Enviar Pedido por WhatsApp
+                <button
+                  type="submit"
+                  style={{
+                    ...styles.submitBtn,
+                    opacity: isSubmitting ? 0.7 : 1,
+                    cursor: isSubmitting ? 'wait' : 'pointer',
+                  }}
+                  disabled={isSubmitting}
+                >
+                  {isSubmitting ? 'Enviando Pedido...' : 'Enviar Pedido por WhatsApp'}
                 </button>
               </form>
             </>

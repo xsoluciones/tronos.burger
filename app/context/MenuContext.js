@@ -282,11 +282,16 @@ export function MenuProvider({ children }) {
 
   // ── Guard para evitar sobreescrituras de cambios locales recientes ──
   const recentLocalUpdatesRef = useRef(new Map());
+  const recentMenuUpdateRef = useRef(0);
+  const deletedOrderIdsRef = useRef(new Set());
 
   // Smart merge que respeta la versión más reciente por updatedAt y respeta el guard de actualización local
-  const smartMergeOrders = useCallback((currentList, incomingList) => {
+  const smartMergeOrders = useCallback((currentList, incomingList, isAudit = false) => {
     if (!Array.isArray(incomingList)) return currentList;
-    if (!Array.isArray(currentList) || currentList.length === 0) return incomingList;
+    if (!Array.isArray(currentList) || currentList.length === 0) {
+      if (isAudit) return incomingList.filter(o => !deletedOrderIdsRef.current.has(o?.id));
+      return incomingList.filter(o => o && o.status !== 'anulado_admin' && !deletedOrderIdsRef.current.has(o.id));
+    }
 
     const now = Date.now();
     const map = new Map();
@@ -298,6 +303,25 @@ export function MenuProvider({ children }) {
 
     incomingList.forEach((incoming) => {
       if (!incoming || !incoming.id) return;
+
+      // Descartar pedidos que fueron anulados o eliminados si estamos en la lista de activas
+      if (!isAudit && (incoming.status === 'anulado_admin' || deletedOrderIdsRef.current.has(incoming.id))) {
+        if (map.has(incoming.id)) {
+          map.delete(incoming.id);
+          hasChanges = true;
+        }
+        return;
+      }
+
+      // Si fue purgado por el Administrador, descartarlo de auditoría también
+      if (isAudit && deletedOrderIdsRef.current.has(incoming.id)) {
+        if (map.has(incoming.id)) {
+          map.delete(incoming.id);
+          hasChanges = true;
+        }
+        return;
+      }
+
       const current = map.get(incoming.id);
 
       if (!current) {
@@ -306,7 +330,7 @@ export function MenuProvider({ children }) {
         return;
       }
 
-      // Si el pedido fue actualizado localmente en los últimos 15s, protegerlo de sobrescritura
+      // Si el pedido fue actualizado localmente en los últimos 30s, protegerlo de sobrescritura
       const protectUntil = recentLocalUpdatesRef.current?.get(incoming.id) || 0;
       if (protectUntil > now) {
         return;
@@ -322,7 +346,8 @@ export function MenuProvider({ children }) {
         if (
           incoming.status !== current.status ||
           incoming.invoiced !== current.invoiced ||
-          incoming.deliveryFee !== current.deliveryFee
+          incoming.deliveryFee !== current.deliveryFee ||
+          incoming.total !== current.total
         ) {
           map.set(incoming.id, { ...current, ...incoming });
           hasChanges = true;
@@ -341,61 +366,87 @@ export function MenuProvider({ children }) {
 
   // ── Sincronizar pedidos con Supabase y el Servidor (Acceso Multi-Computador) ──────
   const saveOrdersToSupabase = useCallback(async (ordersList, auditList) => {
+    // Filtrar pedidos activos para asegurar que nunca se sincronicen anulados en la lista activa
+    const cleanActiveOrders = (ordersList || []).filter(
+      (o) => o && o.status !== 'anulado_admin' && !deletedOrderIdsRef.current.has(o.id)
+    );
+    const cleanAuditOrders = (auditList || []).filter(
+      (o) => o && !deletedOrderIdsRef.current.has(o.id) || o?.status === 'anulado_admin'
+    );
+
     // 1) Enviar al servidor local (/api/orders) que sincroniza en disco y con Supabase server-side
     if (typeof window !== 'undefined') {
       try {
         fetch('/api/orders', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'bulk_sync', orders: ordersList, auditOrders: auditList }),
+          body: JSON.stringify({ action: 'bulk_sync', orders: cleanActiveOrders, auditOrders: cleanAuditOrders }),
         }).catch((e) => console.warn('[MenuContext] Sync diferido con /api/orders:', e));
       } catch (e) {}
     }
 
-    // 2) Sincronizar también directo con Supabase (con manejo de fallos para que nunca bloquee la UI)
-    try {
-      const { error } = await supabase
-        .from('app_state')
-        .update({
-          orders_data: ordersList,
-          audit_orders_data: auditList,
-        })
-        .eq('id', 'tronos');
-
-      if (error) {
-        await supabase
+    // 2) Sincronizar directo con Supabase con reintentos para garantizar guardado
+    let attempts = 0;
+    let success = false;
+    while (attempts < 3 && !success) {
+      attempts++;
+      try {
+        const { data, error } = await supabase
           .from('app_state')
           .update({
-            config_data: {
-              ...restaurantConfig,
-              orders_data: ordersList,
-              audit_orders_data: auditList,
-            },
+            orders_data: cleanActiveOrders,
+            audit_orders_data: cleanAuditOrders,
           })
-          .eq('id', 'tronos');
+          .eq('id', 'tronos')
+          .select();
+
+        if (!error && data) {
+          success = true;
+          break;
+        }
+        if (error) {
+          await supabase
+            .from('app_state')
+            .update({
+              config_data: {
+                ...restaurantConfig,
+                orders_data: cleanActiveOrders,
+                audit_orders_data: cleanAuditOrders,
+              },
+            })
+            .eq('id', 'tronos');
+        }
+      } catch (e) {}
+      if (!success && attempts < 3) {
+        await new Promise((r) => setTimeout(r, 600));
       }
-    } catch (e) {
-      // El servidor local respaldará la sincronización en background
     }
   }, [restaurantConfig]);
 
   const addOrder = useCallback((newOrder) => {
+    if (!newOrder || !newOrder.id) return;
+
+    // Evitar procesar pedidos duplicados si ya existen con el mismo ID
+    deletedOrderIdsRef.current.delete(newOrder.id);
+
     const now = new Date().toISOString();
     const orderWithMeta = {
       ...newOrder,
       createdAt: newOrder.date || now,
       updatedAt: now,
-      invoiced: false,
+      invoiced: Boolean(newOrder.invoiced),
       auditFlag: 'registrado',
     };
 
-    recentLocalUpdatesRef.current.set(orderWithMeta.id, Date.now() + 15000);
+    recentLocalUpdatesRef.current.set(orderWithMeta.id, Date.now() + 30000);
 
     let nextOrders = [];
     let nextAudit = [];
 
     setOrders((prev) => {
-      nextOrders = [orderWithMeta, ...prev.filter((o) => o.id !== orderWithMeta.id)];
+      // Si ya existe en la lista, actualizarlo sin duplicar
+      const filtered = prev.filter((o) => o.id !== orderWithMeta.id);
+      nextOrders = [orderWithMeta, ...filtered];
       if (typeof window !== 'undefined') {
         try {
           localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(nextOrders));
@@ -405,7 +456,8 @@ export function MenuProvider({ children }) {
     });
 
     setAuditOrders((prev) => {
-      nextAudit = [orderWithMeta, ...prev.filter((o) => o.id !== orderWithMeta.id)];
+      const filtered = prev.filter((o) => o.id !== orderWithMeta.id);
+      nextAudit = [orderWithMeta, ...filtered];
       if (typeof window !== 'undefined') {
         try {
           localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(nextAudit));
@@ -422,14 +474,6 @@ export function MenuProvider({ children }) {
         channel.postMessage({ type: 'NEW_ORDER_ALERT', order: orderWithMeta });
         channel.close();
       } catch (e) {}
-    }
-
-    if (typeof window !== 'undefined') {
-      fetch('/api/orders', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ order: orderWithMeta }),
-      }).catch((e) => console.error('[MenuContext] Error enviando pedido al servidor:', e));
     }
   }, [saveOrdersToSupabase]);
 
@@ -587,7 +631,8 @@ export function MenuProvider({ children }) {
 
   // Solo Administrador puede anular o eliminar
   const deleteOrder = useCallback((orderId, motivo = 'Anulado por Administrador') => {
-    recentLocalUpdatesRef.current.set(orderId, Date.now() + 15000);
+    deletedOrderIdsRef.current.add(orderId);
+    recentLocalUpdatesRef.current.set(orderId, Date.now() + 30000);
 
     let nextOrders = [];
     let nextAudit = [];
@@ -633,21 +678,45 @@ export function MenuProvider({ children }) {
     }
   }, [saveOrdersToSupabase]);
 
-  // Purga física de auditoría (solo Admin)
+  // Purga física definitiva de auditoría (solo Admin)
   const purgeAuditOrder = useCallback((orderId) => {
-    setAuditOrders((prev) => {
-      const updated = prev.filter((o) => o.id !== orderId);
+    deletedOrderIdsRef.current.add(orderId);
+    recentLocalUpdatesRef.current.set(orderId, Date.now() + 30000);
+
+    let nextOrders = [];
+    let nextAudit = [];
+
+    setOrders((prev) => {
+      nextOrders = prev.filter((o) => o.id !== orderId);
       if (typeof window !== 'undefined') {
-        try {
-          localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(updated));
-        } catch (e) {}
+        try { localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(nextOrders)); } catch (e) {}
       }
-      return updated;
+      return nextOrders;
     });
-  }, []);
+
+    setAuditOrders((prev) => {
+      nextAudit = prev.filter((o) => o.id !== orderId);
+      if (typeof window !== 'undefined') {
+        try { localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(nextAudit)); } catch (e) {}
+      }
+      return nextAudit;
+    });
+
+    saveOrdersToSupabase(nextOrders, nextAudit);
+
+    if (typeof window !== 'undefined') {
+      fetch('/api/orders', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'purge', orderId }),
+      }).catch((e) => console.error('[MenuContext] Error purgando pedido en servidor:', e));
+    }
+  }, [saveOrdersToSupabase]);
 
   // ── Limpiar y reiniciar todos los datos a cero (borrado completo) ──
   const resetAllOrdersData = useCallback(() => {
+    deletedOrderIdsRef.current.clear();
+    recentLocalUpdatesRef.current.clear();
     setOrders([]);
     setAuditOrders([]);
     if (typeof window !== 'undefined') {
@@ -692,17 +761,22 @@ export function MenuProvider({ children }) {
         }
 
         if (data) {
-          // Parse menu data (solo actualizar si los datos cambiaron)
+          // Parse menu data (protegido si hubo cambios locales recientes)
           if (data.menu_data) {
-            let parsedMenu = data.menu_data;
-            if (typeof parsedMenu === 'string') parsedMenu = JSON.parse(parsedMenu);
-            if (Array.isArray(parsedMenu) && parsedMenu.length > 0) {
-              setMenuCategories((prev) => {
-                if (JSON.stringify(prev) === JSON.stringify(parsedMenu)) return prev;
-                return parsedMenu;
-              });
-              if (typeof window !== 'undefined') {
-                try { localStorage.setItem(STORAGE_KEY_MENU, JSON.stringify(parsedMenu)); } catch (e) {}
+            const now = Date.now();
+            if (recentMenuUpdateRef.current > now) {
+              // Proteger cambios locales recientes para que el polling de Supabase no los revierta
+            } else {
+              let parsedMenu = data.menu_data;
+              if (typeof parsedMenu === 'string') parsedMenu = JSON.parse(parsedMenu);
+              if (Array.isArray(parsedMenu) && parsedMenu.length > 0) {
+                setMenuCategories((prev) => {
+                  if (JSON.stringify(prev) === JSON.stringify(parsedMenu)) return prev;
+                  return parsedMenu;
+                });
+                if (typeof window !== 'undefined') {
+                  try { localStorage.setItem(STORAGE_KEY_MENU, JSON.stringify(parsedMenu)); } catch (e) {}
+                }
               }
             }
           }
@@ -959,39 +1033,163 @@ export function MenuProvider({ children }) {
     };
   }, []);
 
-  // ── Sincronización explícita de menú con Supabase (solo ante cambios manuales) ──
+  // ── Sincronización explícita de menú con Supabase y servidor local (/api/menu) ──
   const saveMenuToSupabase = useCallback(async (categories) => {
-    if (!categories || !Array.isArray(categories)) return false;
-    try {
-      if (typeof window !== 'undefined') {
-        try {
-          localStorage.setItem(STORAGE_KEY_MENU, JSON.stringify(categories));
-        } catch (e) {}
-      }
+    if (!categories || !Array.isArray(categories)) return { success: false, error: 'Categorías inválidas' };
 
-      if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
-        try {
-          const channel = new BroadcastChannel('tronos_orders_channel');
-          channel.postMessage({ type: 'SYNC_MENU', data: categories });
-          channel.close();
-        } catch (e) {}
-      }
+    // Proteger durante 30s contra sobreescrituras por lecturas remotas
+    recentMenuUpdateRef.current = Date.now() + 30000;
 
-      const { error } = await supabase
-        .from('app_state')
-        .update({ menu_data: categories })
-        .eq('id', 'tronos');
-
-      if (error) {
-        console.error('Error saving menu to Supabase:', error);
-        return false;
-      }
-      return true;
-    } catch (error) {
-      console.warn('Error saving menu to Supabase:', error);
-      return false;
+    // 1) Guardar en localStorage de inmediato
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem(STORAGE_KEY_MENU, JSON.stringify(categories));
+      } catch (e) {}
     }
+
+    // 2) Sincronizar entre pestañas locales
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      try {
+        const channel = new BroadcastChannel('tronos_orders_channel');
+        channel.postMessage({ type: 'SYNC_MENU', data: categories });
+        channel.close();
+      } catch (e) {}
+    }
+
+    // 3) Enviar al servidor local (/api/menu) para respaldo en disco
+    let serverOk = false;
+    if (typeof window !== 'undefined') {
+      try {
+        const res = await fetch('/api/menu', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'save_menu', menu_data: categories }),
+        });
+        if (res.ok) serverOk = true;
+      } catch (e) {
+        console.warn('[MenuContext] Error al enviar a /api/menu:', e);
+      }
+    }
+
+    // 4) Sincronizar directo con Supabase con reintentos
+    let supaOk = false;
+    let supaError = null;
+    let attempts = 0;
+
+    while (attempts < 3 && !supaOk) {
+      attempts++;
+      try {
+        const { data, error } = await supabase
+          .from('app_state')
+          .update({ menu_data: categories })
+          .eq('id', 'tronos')
+          .select();
+
+        if (!error && data) {
+          supaOk = true;
+          break;
+        }
+        if (error) supaError = error.message;
+      } catch (err) {
+        supaError = err?.message || 'Error de conexión';
+      }
+      if (!supaOk && attempts < 3) {
+        await new Promise((r) => setTimeout(r, 600));
+      }
+    }
+
+    return {
+      success: supaOk || serverOk,
+      supaOk,
+      serverOk,
+      error: supaError,
+    };
   }, []);
+
+  // ── Guardar todos los cambios (Menú + Configuración) con Botón de Seguridad ──
+  const saveAllChanges = useCallback(async () => {
+    recentMenuUpdateRef.current = Date.now() + 30000;
+
+    const cleanActiveOrders = (orders || []).filter(
+      (o) => o && o.status !== 'anulado_admin' && !deletedOrderIdsRef.current.has(o.id)
+    );
+    const cleanAuditOrders = (auditOrders || []).filter(
+      (o) => o && !deletedOrderIdsRef.current.has(o.id) || o?.status === 'anulado_admin'
+    );
+
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem(STORAGE_KEY_MENU, JSON.stringify(menuCategories));
+        localStorage.setItem(STORAGE_KEY_CONFIG, JSON.stringify(restaurantConfig));
+        localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(cleanActiveOrders));
+        localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(cleanAuditOrders));
+      } catch (e) {}
+    }
+
+    let serverOk = false;
+    try {
+      const res = await fetch('/api/menu', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'save_all',
+          menu_data: menuCategories,
+          config_data: restaurantConfig,
+        }),
+      });
+      if (res.ok) serverOk = true;
+    } catch (e) {}
+
+    try {
+      await fetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'bulk_sync',
+          orders: cleanActiveOrders,
+          auditOrders: cleanAuditOrders,
+        }),
+      });
+    } catch (e) {}
+
+    let supaOk = false;
+    let supaError = null;
+    let attempts = 0;
+
+    while (attempts < 3 && !supaOk) {
+      attempts++;
+      try {
+        const { data, error } = await supabase
+          .from('app_state')
+          .update({
+            menu_data: menuCategories,
+            config_data: restaurantConfig,
+            orders_data: cleanActiveOrders,
+            audit_orders_data: cleanAuditOrders,
+          })
+          .eq('id', 'tronos')
+          .select();
+
+        if (!error && data) {
+          supaOk = true;
+          break;
+        }
+        if (error) supaError = error.message;
+      } catch (err) {
+        supaError = err?.message || 'Error de conexión con Supabase';
+      }
+      if (!supaOk && attempts < 3) {
+        await new Promise((r) => setTimeout(r, 600));
+      }
+    }
+
+    return {
+      success: supaOk || serverOk,
+      supaOk,
+      serverOk,
+      error: supaError,
+    };
+  }, [menuCategories, restaurantConfig, orders, auditOrders]);
 
   // ── Sincronización explícita de config con Supabase (solo ante cambios manuales) ──
   const saveConfigToSupabase = useCallback(async (config) => {
@@ -1142,53 +1340,67 @@ export function MenuProvider({ children }) {
   // ── Funciones de administración (Menú Dinámico) ──────────────────────
 
   // Añadir un nuevo plato a una categoría específica
-  const addMenuItem = useCallback((categoryId, item) => {
+  const addMenuItem = useCallback(async (categoryId, item) => {
+    recentMenuUpdateRef.current = Date.now() + 30000;
+    let nextCategories = [];
     setMenuCategories((prev) => {
-      const next = prev.map((cat) => {
+      nextCategories = prev.map((cat) => {
         if (cat.id === categoryId) {
           const itemToAdd = {
             ...item,
             categoryId,
             extras: Array.isArray(item.extras) ? item.extras : [],
           };
-          return { ...cat, items: [...cat.items, itemToAdd] };
+          return { ...cat, items: [...(cat.items || []), itemToAdd] };
         }
         return cat;
       });
-      saveMenuToSupabase(next);
-      return next;
+      if (typeof window !== 'undefined') {
+        try { localStorage.setItem(STORAGE_KEY_MENU, JSON.stringify(nextCategories)); } catch (e) {}
+      }
+      return nextCategories;
     });
+    return await saveMenuToSupabase(nextCategories);
   }, [saveMenuToSupabase]);
 
   // Eliminar un plato
-  const deleteMenuItem = useCallback((categoryId, itemId) => {
+  const deleteMenuItem = useCallback(async (categoryId, itemId) => {
+    recentMenuUpdateRef.current = Date.now() + 30000;
+    let nextCategories = [];
     setMenuCategories((prev) => {
-      const next = prev.map((cat) => {
+      nextCategories = prev.map((cat) => {
         if (cat.id === categoryId) {
-          return { ...cat, items: cat.items.filter((item) => item.id !== itemId) };
+          return { ...cat, items: (cat.items || []).filter((item) => item.id !== itemId) };
         }
         return cat;
       });
-      saveMenuToSupabase(next);
-      return next;
+      if (typeof window !== 'undefined') {
+        try { localStorage.setItem(STORAGE_KEY_MENU, JSON.stringify(nextCategories)); } catch (e) {}
+      }
+      return nextCategories;
     });
     setCart((prev) => prev.filter((cartItem) => cartItem.id !== itemId));
+    return await saveMenuToSupabase(nextCategories);
   }, [saveMenuToSupabase]);
 
   // Actualizar un plato
-  const updateMenuItem = useCallback((categoryId, updatedItem) => {
+  const updateMenuItem = useCallback(async (categoryId, updatedItem) => {
+    recentMenuUpdateRef.current = Date.now() + 30000;
+    let nextCategories = [];
     setMenuCategories((prev) => {
-      const next = prev.map((cat) => {
+      nextCategories = prev.map((cat) => {
         if (cat.id === categoryId) {
           return {
             ...cat,
-            items: cat.items.map((item) => (item.id === updatedItem.id ? { ...item, ...updatedItem } : item)),
+            items: (cat.items || []).map((item) => (item.id === updatedItem.id ? { ...item, ...updatedItem } : item)),
           };
         }
         return cat;
       });
-      saveMenuToSupabase(next);
-      return next;
+      if (typeof window !== 'undefined') {
+        try { localStorage.setItem(STORAGE_KEY_MENU, JSON.stringify(nextCategories)); } catch (e) {}
+      }
+      return nextCategories;
     });
     setCart((prev) =>
       prev.map((cartItem) =>
@@ -1197,42 +1409,58 @@ export function MenuProvider({ children }) {
           : cartItem
       )
     );
+    return await saveMenuToSupabase(nextCategories);
   }, [saveMenuToSupabase]);
 
   // Actualizar adicionales de un plato (Admin)
-  const updateItemExtras = useCallback((categoryId, itemId, newExtras) => {
+  const updateItemExtras = useCallback(async (categoryId, itemId, newExtras) => {
+    recentMenuUpdateRef.current = Date.now() + 30000;
+    let nextCategories = [];
     setMenuCategories((prev) => {
-      const next = prev.map((cat) => {
+      nextCategories = prev.map((cat) => {
         if (cat.id === categoryId) {
           return {
             ...cat,
-            items: cat.items.map((item) => (item.id === itemId ? { ...item, extras: newExtras } : item)),
+            items: (cat.items || []).map((item) => (item.id === itemId ? { ...item, extras: newExtras } : item)),
           };
         }
         return cat;
       });
-      saveMenuToSupabase(next);
-      return next;
+      if (typeof window !== 'undefined') {
+        try { localStorage.setItem(STORAGE_KEY_MENU, JSON.stringify(nextCategories)); } catch (e) {}
+      }
+      return nextCategories;
     });
+    return await saveMenuToSupabase(nextCategories);
   }, [saveMenuToSupabase]);
 
   // Añadir nueva categoría
-  const addCategory = useCallback((category) => {
+  const addCategory = useCallback(async (category) => {
+    recentMenuUpdateRef.current = Date.now() + 30000;
+    let nextCategories = [];
     setMenuCategories((prev) => {
-      const next = [...prev, category];
-      saveMenuToSupabase(next);
-      return next;
+      nextCategories = [...prev, category];
+      if (typeof window !== 'undefined') {
+        try { localStorage.setItem(STORAGE_KEY_MENU, JSON.stringify(nextCategories)); } catch (e) {}
+      }
+      return nextCategories;
     });
+    return await saveMenuToSupabase(nextCategories);
   }, [saveMenuToSupabase]);
 
   // Eliminar categoría (y todos sus platos)
-  const deleteCategory = useCallback((categoryId) => {
+  const deleteCategory = useCallback(async (categoryId) => {
+    recentMenuUpdateRef.current = Date.now() + 30000;
+    let nextCategories = [];
     setMenuCategories((prev) => {
-      const next = prev.filter((cat) => cat.id !== categoryId);
-      saveMenuToSupabase(next);
-      return next;
+      nextCategories = prev.filter((cat) => cat.id !== categoryId);
+      if (typeof window !== 'undefined') {
+        try { localStorage.setItem(STORAGE_KEY_MENU, JSON.stringify(nextCategories)); } catch (e) {}
+      }
+      return nextCategories;
     });
     setCart((prevCart) => prevCart.filter(item => item.categoryId !== categoryId));
+    return await saveMenuToSupabase(nextCategories);
   }, [saveMenuToSupabase]);
 
   // ── Funciones de Configuración ─────────────────────────────────────────
@@ -1379,6 +1607,8 @@ export function MenuProvider({ children }) {
       resetAllOrdersData,
       posBackupFolderName,
       updatePosBackupFolderName,
+      saveMenuToSupabase,
+      saveAllChanges,
     }),
     [
       menuCategories,
@@ -1421,6 +1651,8 @@ export function MenuProvider({ children }) {
       resetAllOrdersData,
       posBackupFolderName,
       updatePosBackupFolderName,
+      saveMenuToSupabase,
+      saveAllChanges,
     ]
   );
 

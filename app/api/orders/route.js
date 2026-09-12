@@ -14,6 +14,7 @@ import {
   addOrder,
   updateOrderStatus,
   deleteOrder,
+  purgeOrder,
   resetAllOrders,
   bulkSyncOrders,
 } from './store.js';
@@ -75,6 +76,11 @@ export async function PUT(request) {
 
     if (action === 'delete') {
       await deleteOrder(orderId, motivo);
+      return NextResponse.json({ ok: true });
+    }
+
+    if (action === 'purge') {
+      await purgeOrder(orderId);
       return NextResponse.json({ ok: true });
     }
 

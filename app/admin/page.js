@@ -66,7 +66,31 @@ export default function AdminPOSPage() {
     resetAllOrdersData,
     posBackupFolderName,
     updatePosBackupFolderName,
+    saveMenuToSupabase,
+    saveAllChanges,
   } = useMenu();
+
+  // ── Estado de Guardado Manual de Seguridad (Supabase + Local) ─────
+  const [isSavingSafety, setIsSavingSafety] = useState(false);
+
+  const handleSaveAllSafety = async () => {
+    setIsSavingSafety(true);
+    showToast('Sincronizando menú y configuración con Supabase...', 'info');
+    try {
+      const res = await saveAllChanges();
+      if (res?.supaOk) {
+        showToast('✓ ¡Cambios guardados con éxito en Supabase y Respaldo local!', 'success');
+      } else if (res?.serverOk) {
+        showToast('✓ Cambios respaldados localmente (sincronizando con Supabase en segundo plano).', 'success');
+      } else {
+        showToast('⚠️ No se pudo conectar a Supabase. Guardado en navegador.', 'error');
+      }
+    } catch (e) {
+      showToast('Error al guardar cambios: ' + (e?.message || 'Error desconocido'), 'error');
+    } finally {
+      setIsSavingSafety(false);
+    }
+  };
 
   // ── Estados para Personalizar Pedido (Adición con Precio Manual en Cocina) ──
   const [customizingOrder, setCustomizingOrder] = useState(null);
@@ -2465,6 +2489,40 @@ export default function AdminPOSPage() {
               <IconSettings size={16} />
               <span>Respaldo PC & Ajustes</span>
             </button>
+
+            {/* Botón de Seguridad: Guardar Cambios */}
+            <button
+              type="button"
+              onClick={handleSaveAllSafety}
+              disabled={isSavingSafety}
+              className="btn btn-sm d-flex align-items-center justify-content-center gap-2"
+              style={{
+                background: '#ffffff',
+                color: '#059669',
+                borderRadius: '10px',
+                padding: '8px 18px',
+                fontSize: '13px',
+                fontWeight: 800,
+                border: '2px solid #00a854',
+                boxShadow: '0 2px 8px rgba(0, 168, 84, 0.25)',
+                transition: 'all 0.2s',
+                cursor: isSavingSafety ? 'wait' : 'pointer',
+                opacity: isSavingSafety ? 0.75 : 1,
+              }}
+              title="Guardar todos los cambios del menú y configuración en Supabase y respaldo en PC"
+            >
+              {isSavingSafety ? (
+                <>
+                  <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true" style={{ width: '13px', height: '13px', borderWidth: '2px' }} />
+                  <span>Guardando...</span>
+                </>
+              ) : (
+                <>
+                  <span style={{ fontSize: '15px' }}>🛡️</span>
+                  <span>Guardar Cambios</span>
+                </>
+              )}
+            </button>
           </div>
         </div>
 
@@ -4044,10 +4102,14 @@ export default function AdminPOSPage() {
                             </span>
 
                             <button
-                              onClick={() => {
+                              onClick={async () => {
                                 if (confirm(`¿Eliminar comanda #${order.id}?`)) {
-                                  deleteOrder(order.id);
-                                  showToast(`Comanda #${order.id} eliminada.`);
+                                  try {
+                                    await deleteOrder(order.id);
+                                    showToast(`✓ Comanda #${order.id} eliminada y sincronizada en Supabase.`);
+                                  } catch (e) {
+                                    showToast(`Comanda #${order.id} eliminada localmente.`);
+                                  }
                                 }
                               }}
                               className="btn btn-sm p-0 text-danger position-absolute end-0 d-flex align-items-center"
@@ -4253,11 +4315,15 @@ export default function AdminPOSPage() {
                               )}
 
                               <button
-                                onClick={() => {
+                                onClick={async () => {
                                   if (confirm(`¿Anular y purgar definitivamente la comanda #${order.id} del registro maestro de auditoría? Esta acción es exclusiva del Administrador.`)) {
-                                    deleteOrder(order.id);
-                                    purgeAuditOrder(order.id);
-                                    showToast(`Comanda #${order.id} purgada de auditoría.`);
+                                    try {
+                                      await deleteOrder(order.id);
+                                      await purgeAuditOrder(order.id);
+                                      showToast(`✓ Comanda #${order.id} purgada y actualizada en Supabase.`);
+                                    } catch (e) {
+                                      showToast(`Comanda #${order.id} purgada localmente.`);
+                                    }
                                   }
                                 }}
                                 className="btn btn-sm btn-outline-danger"
@@ -4671,24 +4737,57 @@ export default function AdminPOSPage() {
                   ({menuCategories.length} secciones activas)
                 </span>
               </div>
-              <form onSubmit={handleAddCategory} className="d-flex gap-2" style={{ maxWidth: '360px', width: '100%' }}>
-                <input
-                  type="text"
-                  value={newCategoryTitle}
-                  onChange={(e) => setNewCategoryTitle(e.target.value)}
-                  placeholder="Nueva categoría (ej: Bebidas, Parrilla)..."
-                  className="form-control form-control-sm text-center"
-                  style={{ background: '#ffffff', color: '#111111', borderColor: 'rgba(0,0,0,0.15)', borderRadius: '10px', fontSize: '12.5px' }}
-                />
+              <div className="d-flex align-items-center gap-2 flex-wrap">
                 <button
-                  type="submit"
-                  className="btn btn-sm text-nowrap fw-bold d-flex align-items-center justify-content-center gap-1"
-                  style={{ background: '#141414', color: '#ffffff', border: '1px solid rgba(255,255,255,0.25)', borderRadius: '10px', fontSize: '12.5px', padding: '6px 16px' }}
+                  type="button"
+                  onClick={handleSaveAllSafety}
+                  disabled={isSavingSafety}
+                  className="btn btn-sm d-flex align-items-center justify-content-center gap-1.5"
+                  style={{
+                    background: '#ffffff',
+                    color: '#059669',
+                    borderRadius: '10px',
+                    padding: '6px 14px',
+                    fontSize: '12.5px',
+                    fontWeight: 800,
+                    border: '2px solid #00a854',
+                    boxShadow: '0 2px 8px rgba(0, 168, 84, 0.2)',
+                    cursor: isSavingSafety ? 'wait' : 'pointer',
+                    opacity: isSavingSafety ? 0.75 : 1,
+                  }}
+                  title="Guardar todos los cambios del menú en Supabase y respaldo local"
                 >
-                  <IconPlus size={13} />
-                  <span>Crear</span>
+                  {isSavingSafety ? (
+                    <>
+                      <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true" style={{ width: '12px', height: '12px', borderWidth: '2px' }} />
+                      <span>Guardando...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span style={{ fontSize: '14px' }}>🛡️</span>
+                      <span>Guardar Cambios</span>
+                    </>
+                  )}
                 </button>
-              </form>
+                <form onSubmit={handleAddCategory} className="d-flex gap-2" style={{ maxWidth: '360px', width: '100%' }}>
+                  <input
+                    type="text"
+                    value={newCategoryTitle}
+                    onChange={(e) => setNewCategoryTitle(e.target.value)}
+                    placeholder="Nueva categoría (ej: Bebidas, Parrilla)..."
+                    className="form-control form-control-sm text-center"
+                    style={{ background: '#ffffff', color: '#111111', borderColor: 'rgba(0,0,0,0.15)', borderRadius: '10px', fontSize: '12.5px' }}
+                  />
+                  <button
+                    type="submit"
+                    className="btn btn-sm text-nowrap fw-bold d-flex align-items-center justify-content-center gap-1"
+                    style={{ background: '#141414', color: '#ffffff', border: '1px solid rgba(255,255,255,0.25)', borderRadius: '10px', fontSize: '12.5px', padding: '6px 16px' }}
+                  >
+                    <IconPlus size={13} />
+                    <span>Crear</span>
+                  </button>
+                </form>
+              </div>
             </div>
 
             {/* Listado de Categorías y TABLA POS EJECUTIVA */}
@@ -4739,10 +4838,17 @@ export default function AdminPOSPage() {
                         )}
                       </button>
                       <button
-                        onClick={() => {
+                        onClick={async () => {
                           if (confirm(`¿Eliminar la categoría "${category.title}"?`)) {
-                            deleteCategory(category.id);
-                            showToast('Categoría eliminada.');
+                            showToast('Eliminando categoría y sincronizando con Supabase...', 'info');
+                            const res = await deleteCategory(category.id);
+                            if (res?.supaOk) {
+                              showToast('✓ Categoría eliminada y guardada en Supabase.', 'success');
+                            } else if (res?.serverOk) {
+                              showToast('✓ Categoría eliminada (guardada localmente, sincronizando en segundo plano).', 'success');
+                            } else {
+                              showToast('⚠️ Eliminada localmente. Pulsa "Guardar Cambios" para asegurar en Supabase.', 'error');
+                            }
                           }
                         }}
                         className="btn btn-sm text-danger d-flex align-items-center"
@@ -5006,10 +5112,17 @@ export default function AdminPOSPage() {
                                       Editar
                                     </button>
                                     <button
-                                      onClick={() => {
+                                      onClick={async () => {
                                         if (confirm(`¿Eliminar "${item.name}"?`)) {
-                                          deleteMenuItem(category.id, item.id);
-                                          showToast('Plato eliminado y actualizado en Supabase.');
+                                          showToast('Eliminando plato y sincronizando con Supabase...', 'info');
+                                          const res = await deleteMenuItem(category.id, item.id);
+                                          if (res?.supaOk) {
+                                            showToast('✓ Plato eliminado y actualizado en Supabase.', 'success');
+                                          } else if (res?.serverOk) {
+                                            showToast('✓ Plato eliminado (guardado localmente, sincronizando en segundo plano).', 'success');
+                                          } else {
+                                            showToast('⚠️ Eliminado localmente. Pulsa "Guardar Cambios" para asegurar en Supabase.', 'error');
+                                          }
                                         }
                                       }}
                                       className="btn btn-sm text-danger d-flex align-items-center"

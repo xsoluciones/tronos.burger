@@ -77,25 +77,39 @@ async function syncToSupabase() {
   isSyncingToSupabase = true;
   pendingSupabaseSync = false;
 
-  try {
-    const { error } = await supabase
-      .from('app_state')
-      .update({
-        orders_data: orders,
-        audit_orders_data: auditOrders,
-      })
-      .eq('id', 'tronos');
+  let attempts = 0;
+  let success = false;
 
-    if (error) {
-      console.warn('[OrderStore] Supabase update warning:', error.message);
+  while (attempts < 3 && !success) {
+    attempts++;
+    try {
+      const { data, error } = await supabase
+        .from('app_state')
+        .update({
+          orders_data: orders,
+          audit_orders_data: auditOrders,
+        })
+        .eq('id', 'tronos')
+        .select();
+
+      if (!error && data) {
+        success = true;
+        break;
+      }
+      if (error) {
+        console.warn(`[OrderStore] Supabase sync intento ${attempts} falló:`, error.message);
+      }
+    } catch (e) {
+      console.warn(`[OrderStore] Error guardando pedidos en Supabase (intento ${attempts}):`, e?.message);
     }
-  } catch (e) {
-    console.error('[OrderStore] Error guardando pedidos en Supabase:', e);
-  } finally {
-    isSyncingToSupabase = false;
-    if (pendingSupabaseSync) {
-      setTimeout(syncToSupabase, 150);
+    if (!success && attempts < 3) {
+      await new Promise((r) => setTimeout(r, 600));
     }
+  }
+
+  isSyncingToSupabase = false;
+  if (pendingSupabaseSync) {
+    setTimeout(syncToSupabase, 150);
   }
 }
 
@@ -213,6 +227,13 @@ export async function deleteOrder(orderId, motivo = 'Anulado por Administrador')
   broadcast('ORDER_DELETED', { orderId, motivo });
 }
 
+export async function purgeOrder(orderId) {
+  orders = orders.filter((o) => o.id !== orderId);
+  auditOrders = auditOrders.filter((o) => o.id !== orderId);
+  await persist();
+  broadcast('ORDER_PURGED', { orderId });
+}
+
 export async function resetAllOrders() {
   orders = [];
   auditOrders = [];
@@ -229,6 +250,11 @@ export async function bulkSyncOrders(newOrders, newAudit, shouldSyncSupabase = t
 
     for (const incoming of newOrders) {
       if (!incoming || !incoming.id) continue;
+      // Nunca re-insertar pedidos anulados a las comandas activas
+      if (incoming.status === 'anulado_admin') continue;
+      const inAudit = auditOrders.find((a) => a.id === incoming.id);
+      if (inAudit && inAudit.status === 'anulado_admin') continue;
+
       const existing = map.get(incoming.id);
       if (!existing) {
         map.set(incoming.id, incoming);

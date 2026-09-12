@@ -231,7 +231,7 @@ export default function CajaPage() {
     const subtotal = manualCart.reduce((sum, item) => sum + ((item.price || 0) * (item.quantity || 1)), 0);
     const total = subtotal + deliveryFee;
 
-    const newOrderId = `TRN-${Date.now().toString().slice(-4)}`;
+    const newOrderId = `TRN-${Date.now().toString().slice(-6)}-${Math.floor(100 + Math.random() * 900)}`;
     const newOrder = {
       id: newOrderId,
       date: new Date().toISOString(),
