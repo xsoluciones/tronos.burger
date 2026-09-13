@@ -941,15 +941,20 @@ export function MenuProvider({ children }) {
           }
         }
 
-        // 2) Enviar pedidos locales al servidor (por si el servidor acaba de reiniciar)
-        const localOrders = JSON.parse(localStorage.getItem(STORAGE_KEY_ORDERS) || '[]');
-        const localAudit = JSON.parse(localStorage.getItem(STORAGE_KEY_AUDIT_ORDERS) || '[]');
-        if (localOrders.length > 0 || localAudit.length > 0) {
-          fetch('/api/orders', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'bulk_sync', orders: localOrders, auditOrders: localAudit }),
-          }).catch(() => {});
+        // 2) Solo enviar respaldo local si el servidor no tiene pedidos (ej. reinicio de servidor)
+        const serverHasOrders = data?.orders && data.orders.length > 0;
+        if (!serverHasOrders) {
+          const rawLocalOrders = JSON.parse(localStorage.getItem(STORAGE_KEY_ORDERS) || '[]');
+          const rawLocalAudit = JSON.parse(localStorage.getItem(STORAGE_KEY_AUDIT_ORDERS) || '[]');
+          const cleanLocalOrders = rawLocalOrders.filter(o => o && !deletedOrderIdsRef.current.has(o.id));
+          const cleanLocalAudit = rawLocalAudit.filter(o => o && !deletedOrderIdsRef.current.has(o.id));
+          if (cleanLocalOrders.length > 0 || cleanLocalAudit.length > 0) {
+            fetch('/api/orders', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ action: 'bulk_sync', orders: cleanLocalOrders, auditOrders: cleanLocalAudit }),
+            }).catch(() => {});
+          }
         }
       } catch (e) {
         console.error('[MenuContext] Error en sincronización inicial con servidor:', e);
@@ -1209,58 +1214,79 @@ export function MenuProvider({ children }) {
     }
 
     let supaOk = false;
+    let serverOk = false;
     let supaError = null;
 
-    try {
-      const supaPromise = supabase
-        .from('app_state')
-        .update({
-          menu_data: menuCategories,
-          config_data: restaurantConfig,
-          orders_data: cleanActiveOrders,
-          audit_orders_data: cleanAuditOrders,
-        })
-        .eq('id', 'tronos');
-
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Tiempo de espera agotado con Supabase (8s)')), 8000)
-      );
-
-      const res = await Promise.race([supaPromise, timeoutPromise]);
-      if (!res?.error) {
-        supaOk = true;
-      } else {
-        supaError = res.error?.message;
-        console.warn('[MenuContext] Error actualizando Supabase:', res.error);
+    // 1) Enviar al servidor local (/api/menu y /api/orders) que usa supabaseAdmin con credenciales completas
+    const serverMenuTask = (async () => {
+      if (typeof window === 'undefined') return;
+      try {
+        const res = await fetch('/api/menu', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'save_all',
+            menu_data: menuCategories,
+            config_data: restaurantConfig,
+          }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data?.ok) serverOk = true;
+          if (data?.supabaseSynced) supaOk = true;
+        }
+      } catch (e) {
+        console.warn('[MenuContext] Error al enviar a /api/menu:', e);
       }
-    } catch (err) {
-      supaError = err?.message || 'Conexión lenta con Supabase';
-      console.warn('[MenuContext] Excepción actualizando Supabase:', err);
-    }
+    })();
 
-    // Respaldo asíncrono en servidor local/Vercel (fire-and-forget sin bloquear al usuario)
-    let serverOk = false;
-    if (typeof window !== 'undefined') {
-      fetch('/api/menu', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'save_all',
-          menu_data: menuCategories,
-          config_data: restaurantConfig,
-        }),
-      }).then(r => { if (r.ok) serverOk = true; }).catch(() => {});
+    const serverOrdersTask = (async () => {
+      if (typeof window === 'undefined') return;
+      try {
+        const res = await fetch('/api/orders', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'bulk_sync',
+            orders: cleanActiveOrders,
+            auditOrders: cleanAuditOrders,
+          }),
+        });
+        if (res.ok) serverOk = true;
+      } catch (e) {
+        console.warn('[MenuContext] Error al enviar a /api/orders:', e);
+      }
+    })();
 
-      fetch('/api/orders', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'bulk_sync',
-          orders: cleanActiveOrders,
-          auditOrders: cleanAuditOrders,
-        }),
-      }).catch(() => {});
-    }
+    // 2) Sincronizar directo a Supabase con cliente de navegador en paralelo
+    const directSupaTask = (async () => {
+      try {
+        const supaPromise = supabase
+          .from('app_state')
+          .update({
+            menu_data: menuCategories,
+            config_data: restaurantConfig,
+            orders_data: cleanActiveOrders,
+            audit_orders_data: cleanAuditOrders,
+          })
+          .eq('id', 'tronos');
+
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Timeout Supabase Direct (6s)')), 6000)
+        );
+
+        const res = await Promise.race([supaPromise, timeoutPromise]);
+        if (!res?.error) {
+          supaOk = true;
+        } else {
+          supaError = res.error?.message;
+        }
+      } catch (err) {
+        supaError = err?.message || 'Conexión lenta con Supabase';
+      }
+    })();
+
+    await Promise.allSettled([serverMenuTask, serverOrdersTask, directSupaTask]);
 
     return {
       success: supaOk || serverOk,

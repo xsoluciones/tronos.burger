@@ -81,10 +81,10 @@ export default function AdminPOSPage() {
       const res = await saveAllChanges();
       if (res?.supaOk) {
         showToast('✓ ¡Cambios guardados con éxito en Supabase y Respaldo local!', 'success');
-      } else if (res?.serverOk) {
-        showToast('✓ Cambios respaldados localmente (sincronizando con Supabase en segundo plano).', 'success');
+      } else if (res?.serverOk || res?.success) {
+        showToast('✓ ¡Cambios guardados y respaldados con éxito!', 'success');
       } else {
-        showToast('⚠️ No se pudo conectar a Supabase. Guardado en navegador.', 'error');
+        showToast('⚠️ Guardado en el navegador (revisando conexión con el servidor).', 'warning');
       }
     } catch (e) {
       showToast('Error al guardar cambios: ' + (e?.message || 'Error desconocido'), 'error');

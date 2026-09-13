@@ -21,6 +21,7 @@ const DATA_DIR = isVercel
   : path.join(process.cwd(), '.data');
 const ORDERS_FILE = path.join(DATA_DIR, 'orders.json');
 const AUDIT_FILE = path.join(DATA_DIR, 'audit-orders.json');
+const PURGED_FILE = path.join(DATA_DIR, 'purged-orders.json');
 
 function ensureDataDir() {
   try {
@@ -30,6 +31,24 @@ function ensureDataDir() {
   } catch (e) {
     // Ignorar si el sistema de archivos no es escribible
   }
+}
+
+function loadPurgedFromFile() {
+  try {
+    if (fs.existsSync(PURGED_FILE)) {
+      const raw = fs.readFileSync(PURGED_FILE, 'utf-8');
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return new Set(parsed);
+    }
+  } catch (e) {}
+  return new Set();
+}
+
+function savePurgedToFile(purgedSet) {
+  try {
+    ensureDataDir();
+    fs.writeFileSync(PURGED_FILE, JSON.stringify(Array.from(purgedSet)), 'utf-8');
+  } catch (e) {}
 }
 
 function loadFromFile(filePath) {
@@ -61,6 +80,9 @@ let orders = loadFromFile(ORDERS_FILE);
 
 /** @type {Array} Pedidos de auditoría */
 let auditOrders = loadFromFile(AUDIT_FILE);
+
+/** @type {Set<string>} IDs de pedidos purgados para evitar resurrecciones */
+let purgedOrderIds = loadPurgedFromFile();
 
 /** @type {Set<ReadableStreamDefaultController>} Clientes SSE conectados */
 const sseClients = new Set();
@@ -183,6 +205,11 @@ export async function addOrder(newOrder) {
     return orders[existingIdx];
   }
 
+  if (orderWithMeta.id && purgedOrderIds.has(orderWithMeta.id)) {
+    purgedOrderIds.delete(orderWithMeta.id);
+    savePurgedToFile(purgedOrderIds);
+  }
+
   orders = [orderWithMeta, ...orders];
   auditOrders = [orderWithMeta, ...auditOrders.filter((o) => o.id !== orderWithMeta.id)];
 
@@ -235,6 +262,11 @@ export async function purgeOrder(orderId) {
   orders = orders.filter((o) => o.id !== orderId);
   auditOrders = auditOrders.filter((o) => o.id !== orderId);
 
+  if (orderId) {
+    purgedOrderIds.add(orderId);
+    savePurgedToFile(purgedOrderIds);
+  }
+
   // 1) Broadcast SSE instantáneo (0ms)
   broadcast('ORDER_PURGED', { orderId });
 
@@ -245,6 +277,8 @@ export async function purgeOrder(orderId) {
 export async function resetAllOrders() {
   orders = [];
   auditOrders = [];
+  purgedOrderIds.clear();
+  savePurgedToFile(purgedOrderIds);
   broadcast('ORDERS_RESET', {});
   persist().catch((e) => console.warn('[OrderStore] persist error:', e?.message));
 }
@@ -258,6 +292,8 @@ export async function bulkSyncOrders(newOrders, newAudit, shouldSyncSupabase = t
 
     for (const incoming of newOrders) {
       if (!incoming || !incoming.id) continue;
+      // Nunca re-insertar pedidos que fueron purgados definitivamente
+      if (purgedOrderIds.has(incoming.id)) continue;
       // Nunca re-insertar pedidos anulados a las comandas activas
       if (incoming.status === 'anulado_admin') continue;
       const inAudit = auditOrders.find((a) => a.id === incoming.id);
@@ -289,6 +325,9 @@ export async function bulkSyncOrders(newOrders, newAudit, shouldSyncSupabase = t
 
     for (const incoming of newAudit) {
       if (!incoming || !incoming.id) continue;
+      // Nunca re-insertar pedidos que fueron purgados definitivamente
+      if (purgedOrderIds.has(incoming.id)) continue;
+
       const existing = map.get(incoming.id);
       if (!existing) {
         map.set(incoming.id, incoming);
