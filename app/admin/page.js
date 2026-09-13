@@ -39,6 +39,20 @@ import {
   IconX,
 } from './icons';
 
+const isOrderFromToday = (order) => {
+  if (!order) return false;
+  const rawDate = order.deliveredAt || order.date || order.createdAt || order.updatedAt;
+  if (!rawDate) return false;
+  const d = new Date(rawDate);
+  if (isNaN(d.getTime())) return false;
+  const now = new Date();
+  return (
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate()
+  );
+};
+
 export default function AdminPOSPage() {
   const {
     menuCategories,
@@ -3425,6 +3439,34 @@ export default function AdminPOSPage() {
                     </button>
                   );
                 })}
+
+                {/* Botón Historial en la barra de filtros */}
+                <button
+                  type="button"
+                  onClick={() => setShowInvoicesModal(true)}
+                  className="btn btn-sm d-inline-flex align-items-center gap-1.5"
+                  style={{
+                    background: invoicedOrders.length > 0 ? '#ecfdf5' : '#ffffff',
+                    border: '2px solid #16a34a',
+                    color: '#15803d',
+                    borderRadius: '6px',
+                    fontSize: '11px',
+                    padding: '3px 10px',
+                    lineHeight: '1.2',
+                    cursor: 'pointer',
+                    boxShadow: '0 2px 6px rgba(22, 163, 74, 0.2)',
+                    transition: 'all 0.15s ease',
+                  }}
+                  title="Ver historial general de ventas, facturas y pedidos de todos los días"
+                >
+                  <span style={{ fontSize: '12px' }}>📁</span>
+                  <span style={{ fontWeight: 800, color: '#15803d', fontSize: '11.5px' }}>
+                    Historial
+                  </span>
+                  <span style={{ fontWeight: 900, color: '#16a34a', fontSize: '12px' }}>
+                    ({invoicedOrders.length})
+                  </span>
+                </button>
 
                 {/* Toggle para Ocultar/Mostrar Entregados */}
                 <button
