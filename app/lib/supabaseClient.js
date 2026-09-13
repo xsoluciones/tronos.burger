@@ -6,6 +6,6 @@ const supabaseUrl =
 
 const supabaseAnonKey =
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-  'sb_publishable_TqRvND_ulEcfqOERBdj_Dg_RMmcwvV9';
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ1dWlyZ2ZxbHV5aHVvb3Ryd2tmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkwNjMwNTAsImV4cCI6MjEwNDYzOTA1MH0.2BY9ESIVLLE9x5yzevAEgRnnfEnUMYU9DgPzAY1Pbek';
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
