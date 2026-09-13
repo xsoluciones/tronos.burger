@@ -7,7 +7,7 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { supabase } from '../../lib/supabaseClient';
+import { supabase, supabaseAdmin } from '../../lib/supabaseClient';
 
 // ── Ruta del archivo de respaldo local ─────────────────────────────────
 // En Vercel (Serverless), /var/task es read-only; usamos os.tmpdir() (/tmp)
@@ -78,7 +78,8 @@ async function syncToSupabase() {
   pendingSupabaseSync = false;
 
   try {
-    const supaPromise = supabase
+    const supaClient = supabaseAdmin || supabase;
+    const supaPromise = supaClient
       .from('app_state')
       .update({
         orders_data: orders,
@@ -107,7 +108,8 @@ export async function ensureInitialized() {
   if (!initPromise) {
     initPromise = (async () => {
       try {
-        const { data, error } = await supabase
+        const supaClient = supabaseAdmin || supabase;
+        const { data, error } = await supaClient
           .from('app_state')
           .select('orders_data, audit_orders_data')
           .eq('id', 'tronos')

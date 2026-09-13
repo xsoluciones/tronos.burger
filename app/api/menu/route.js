@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { supabase } from '../../lib/supabaseClient';
+import { supabase, supabaseAdmin } from '../../lib/supabaseClient';
 
 export const dynamic = 'force-dynamic';
 
@@ -43,28 +43,26 @@ function saveMenuToFile(data) {
 }
 
 async function syncWithSupabase(updatePayload) {
-  let attempts = 0;
-  while (attempts < 3) {
-    attempts++;
-    try {
-      const { data, error } = await supabase
-        .from('app_state')
-        .update(updatePayload)
-        .eq('id', 'tronos')
-        .select();
+  try {
+    const supaClient = supabaseAdmin || supabase;
+    const supaPromise = supaClient
+      .from('app_state')
+      .update(updatePayload)
+      .eq('id', 'tronos');
 
-      if (!error && data) {
-        return { success: true, attempts };
-      }
-      if (error) {
-        console.warn(`[API/menu] Intento ${attempts} falló:`, error.message);
-      }
-    } catch (err) {
-      console.warn(`[API/menu] Intento ${attempts} excepción:`, err?.message);
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Timeout syncWithSupabase (4s)')), 4000)
+    );
+
+    const res = await Promise.race([supaPromise, timeoutPromise]);
+    if (!res?.error) {
+      return { success: true, attempts: 1 };
     }
-    await new Promise((r) => setTimeout(r, 600));
+    console.warn('[API/menu] Supabase update error:', res?.error?.message);
+  } catch (err) {
+    console.warn('[API/menu] Exception updating Supabase:', err?.message);
   }
-  return { success: false, attempts };
+  return { success: false, attempts: 1 };
 }
 
 // ── GET /api/menu ────────────────────────────────────────────────────
