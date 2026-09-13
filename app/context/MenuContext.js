@@ -283,7 +283,45 @@ export function MenuProvider({ children }) {
   // ── Guard para evitar sobreescrituras de cambios locales recientes ──
   const recentLocalUpdatesRef = useRef(new Map());
   const recentMenuUpdateRef = useRef(0);
-  const deletedOrderIdsRef = useRef(new Set());
+  const saveSupabaseTimeoutRef = useRef(null);
+
+  const deletedOrderIdsRef = useRef(
+    (() => {
+      if (typeof window !== 'undefined') {
+        try {
+          const saved = localStorage.getItem('tronos-deleted-orders');
+          if (saved) return new Set(JSON.parse(saved));
+        } catch (e) {}
+      }
+      return new Set();
+    })()
+  );
+
+  const trackDeletedOrderId = useCallback((id) => {
+    if (!id) return;
+    deletedOrderIdsRef.current.add(id);
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem(
+          'tronos-deleted-orders',
+          JSON.stringify(Array.from(deletedOrderIdsRef.current))
+        );
+      } catch (e) {}
+    }
+  }, []);
+
+  const untrackDeletedOrderId = useCallback((id) => {
+    if (!id) return;
+    deletedOrderIdsRef.current.delete(id);
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem(
+          'tronos-deleted-orders',
+          JSON.stringify(Array.from(deletedOrderIdsRef.current))
+        );
+      } catch (e) {}
+    }
+  }, []);
 
   // Smart merge que respeta la versión más reciente por updatedAt y respeta el guard de actualización local
   const smartMergeOrders = useCallback((currentList, incomingList, isAudit = false) => {
@@ -371,7 +409,7 @@ export function MenuProvider({ children }) {
       (o) => o && o.status !== 'anulado_admin' && !deletedOrderIdsRef.current.has(o.id)
     );
     const cleanAuditOrders = (auditList || []).filter(
-      (o) => o && (!deletedOrderIdsRef.current.has(o.id) || o.status === 'anulado_admin')
+      (o) => o && !deletedOrderIdsRef.current.has(o.id)
     );
 
     // 1) Enviar al servidor local (/api/orders) que sincroniza en disco y con Supabase server-side
@@ -385,31 +423,37 @@ export function MenuProvider({ children }) {
       } catch (e) {}
     }
 
-    // 2) Sincronizar directo con Supabase con timeout de seguridad
-    try {
-      const supaPromise = supabase
-        .from('app_state')
-        .update({
-          orders_data: cleanActiveOrders,
-          audit_orders_data: cleanAuditOrders,
-        })
-        .eq('id', 'tronos');
-
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Timeout Supabase Orders (5s)')), 5000)
-      );
-
-      await Promise.race([supaPromise, timeoutPromise]);
-    } catch (e) {
-      console.warn('[MenuContext] Error guardando pedidos en Supabase:', e?.message);
+    // 2) Sincronizar directo con Supabase con debounce (300ms) para evitar colisiones y latencia
+    if (saveSupabaseTimeoutRef.current) {
+      clearTimeout(saveSupabaseTimeoutRef.current);
     }
+
+    saveSupabaseTimeoutRef.current = setTimeout(async () => {
+      try {
+        const supaPromise = supabase
+          .from('app_state')
+          .update({
+            orders_data: cleanActiveOrders,
+            audit_orders_data: cleanAuditOrders,
+          })
+          .eq('id', 'tronos');
+
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Timeout Supabase Orders (5s)')), 5000)
+        );
+
+        await Promise.race([supaPromise, timeoutPromise]);
+      } catch (e) {
+        console.warn('[MenuContext] Error guardando pedidos en Supabase:', e?.message);
+      }
+    }, 300);
   }, []);
 
   const addOrder = useCallback((newOrder) => {
     if (!newOrder || !newOrder.id) return;
 
     // Evitar procesar pedidos duplicados si ya existen con el mismo ID
-    deletedOrderIdsRef.current.delete(newOrder.id);
+    untrackDeletedOrderId(newOrder.id);
 
     const now = new Date().toISOString();
     const orderWithMeta = {
@@ -606,7 +650,7 @@ export function MenuProvider({ children }) {
 
   // Solo Administrador puede anular o eliminar
   const deleteOrder = useCallback((orderId, motivo = 'Anulado por Administrador') => {
-    deletedOrderIdsRef.current.add(orderId);
+    trackDeletedOrderId(orderId);
     recentLocalUpdatesRef.current.set(orderId, Date.now() + 30000);
 
     const currentOrders = Array.isArray(orders) ? orders : [];
@@ -653,11 +697,11 @@ export function MenuProvider({ children }) {
         body: JSON.stringify({ action: 'delete', orderId, motivo }),
       }).catch((e) => console.error('[MenuContext] Error eliminando pedido en servidor:', e));
     }
-  }, [orders, auditOrders, saveOrdersToSupabase]);
+  }, [orders, auditOrders, saveOrdersToSupabase, trackDeletedOrderId]);
 
   // Purga física definitiva de auditoría (solo Admin)
   const purgeAuditOrder = useCallback((orderId) => {
-    deletedOrderIdsRef.current.add(orderId);
+    trackDeletedOrderId(orderId);
     recentLocalUpdatesRef.current.set(orderId, Date.now() + 30000);
 
     const currentOrders = Array.isArray(orders) ? orders : [];
@@ -694,11 +738,14 @@ export function MenuProvider({ children }) {
         body: JSON.stringify({ action: 'purge', orderId }),
       }).catch((e) => console.error('[MenuContext] Error purgando pedido en servidor:', e));
     }
-  }, [orders, auditOrders, saveOrdersToSupabase]);
+  }, [orders, auditOrders, saveOrdersToSupabase, trackDeletedOrderId]);
 
   // ── Limpiar y reiniciar todos los datos a cero (borrado completo) ──
   const resetAllOrdersData = useCallback(() => {
     deletedOrderIdsRef.current.clear();
+    if (typeof window !== 'undefined') {
+      try { localStorage.removeItem('tronos-deleted-orders'); } catch (e) {}
+    }
     recentLocalUpdatesRef.current.clear();
     setOrders([]);
     setAuditOrders([]);
@@ -804,7 +851,7 @@ export function MenuProvider({ children }) {
             const parsedAudit = typeof rawAudit === 'string' ? JSON.parse(rawAudit) : rawAudit;
             if (Array.isArray(parsedAudit)) {
               setAuditOrders((prev) => {
-                const merged = smartMergeOrders(prev, parsedAudit);
+                const merged = smartMergeOrders(prev, parsedAudit, true);
                 if (merged === prev) return prev;
                 if (typeof window !== 'undefined') {
                   try { localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(merged)); } catch (e) {}
@@ -823,17 +870,21 @@ export function MenuProvider({ children }) {
 
     loadFromSupabase();
 
-    // Polling periódico cada 3.5 segundos y Realtime para sincronizar todos los computadores
+    // Polling de respaldo cada 15 segundos (Realtime y SSE son los transportes instantáneos principales)
     const pollInterval = setInterval(() => {
       loadFromSupabase();
-    }, 3500);
+    }, 15000);
 
     let channel = null;
+    let realtimeDebounce = null;
     try {
       channel = supabase
         .channel('app_state_realtime_orders')
         .on('postgres_changes', { event: '*', schema: 'public', table: 'app_state', filter: 'id=eq.tronos' }, () => {
-          loadFromSupabase();
+          if (realtimeDebounce) clearTimeout(realtimeDebounce);
+          realtimeDebounce = setTimeout(() => {
+            loadFromSupabase();
+          }, 250);
         })
         .subscribe();
     } catch (e) {}
@@ -852,6 +903,7 @@ export function MenuProvider({ children }) {
 
     return () => {
       clearInterval(pollInterval);
+      if (realtimeDebounce) clearTimeout(realtimeDebounce);
       if (channel) supabase.removeChannel(channel);
     };
   }, []);
@@ -881,7 +933,7 @@ export function MenuProvider({ children }) {
           }
           if (data.auditOrders && Array.isArray(data.auditOrders) && data.auditOrders.length > 0) {
             setAuditOrders((prev) => {
-              const merged = smartMergeOrders(prev, data.auditOrders);
+              const merged = smartMergeOrders(prev, data.auditOrders, true);
               if (merged === prev) return prev;
               try { localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(merged)); } catch (e) {}
               return merged;
@@ -981,6 +1033,24 @@ export function MenuProvider({ children }) {
           } catch (err) {}
         });
 
+        eventSource.addEventListener('ORDER_PURGED', (e) => {
+          try {
+            const { orderId } = JSON.parse(e.data);
+            if (!orderId) return;
+            trackDeletedOrderId(orderId);
+            setOrders((prev) => {
+              const next = prev.filter(o => o && o.id !== orderId);
+              try { localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(next)); } catch (err) {}
+              return next;
+            });
+            setAuditOrders((prev) => {
+              const next = prev.filter(o => o && o.id !== orderId);
+              try { localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(next)); } catch (err) {}
+              return next;
+            });
+          } catch (err) {}
+        });
+
         eventSource.addEventListener('ORDERS_RESET', () => {
           setOrders([]);
           setAuditOrders([]);
@@ -1003,7 +1073,7 @@ export function MenuProvider({ children }) {
             }
             if (data.auditOrders && Array.isArray(data.auditOrders)) {
               setAuditOrders((prev) => {
-                const merged = smartMergeOrders(prev, data.auditOrders);
+                const merged = smartMergeOrders(prev, data.auditOrders, true);
                 if (merged === prev) return prev;
                 try { localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(merged)); } catch (err) {}
                 return merged;
@@ -1031,10 +1101,10 @@ export function MenuProvider({ children }) {
     initSync();
     connectSSE();
 
-    // Polling periódico de respaldo al servidor cada 3.5 segundos
+    // Polling periódico de respaldo al servidor cada 20 segundos (SSE es el canal principal en tiempo real)
     const serverPollInterval = setInterval(() => {
       if (isMounted) initSync();
-    }, 3500);
+    }, 20000);
 
     return () => {
       isMounted = false;
@@ -1067,9 +1137,13 @@ export function MenuProvider({ children }) {
       } catch (e) {}
     }
 
-    // 3) Enviar al servidor local (/api/menu) para respaldo en disco
+    // 3) Enviar al servidor local (/api/menu) y directo a Supabase EN PARALELO para máxima velocidad
     let serverOk = false;
-    if (typeof window !== 'undefined') {
+    let supaOk = false;
+    let supaError = null;
+
+    const serverTask = (async () => {
+      if (typeof window === 'undefined') return;
       try {
         const res = await fetch('/api/menu', {
           method: 'POST',
@@ -1080,31 +1154,31 @@ export function MenuProvider({ children }) {
       } catch (e) {
         console.warn('[MenuContext] Error al enviar a /api/menu:', e);
       }
-    }
+    })();
 
-    // 4) Sincronizar directo con Supabase con protección de timeout
-    let supaOk = false;
-    let supaError = null;
+    const supaTask = (async () => {
+      try {
+        const supaPromise = supabase
+          .from('app_state')
+          .update({ menu_data: categories })
+          .eq('id', 'tronos');
 
-    try {
-      const supaPromise = supabase
-        .from('app_state')
-        .update({ menu_data: categories })
-        .eq('id', 'tronos');
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Tiempo de espera agotado con Supabase (5s)')), 5000)
+        );
 
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Tiempo de espera agotado con Supabase (5s)')), 5000)
-      );
-
-      const res = await Promise.race([supaPromise, timeoutPromise]);
-      if (!res?.error) {
-        supaOk = true;
-      } else {
-        supaError = res.error?.message;
+        const res = await Promise.race([supaPromise, timeoutPromise]);
+        if (!res?.error) {
+          supaOk = true;
+        } else {
+          supaError = res.error?.message;
+        }
+      } catch (err) {
+        supaError = err?.message || 'Error de conexión';
       }
-    } catch (err) {
-      supaError = err?.message || 'Error de conexión';
-    }
+    })();
+
+    await Promise.allSettled([serverTask, supaTask]);
 
     return {
       success: supaOk || serverOk,
@@ -1122,7 +1196,7 @@ export function MenuProvider({ children }) {
       (o) => o && o.status !== 'anulado_admin' && !deletedOrderIdsRef.current.has(o.id)
     );
     const cleanAuditOrders = (auditOrders || []).filter(
-      (o) => o && (!deletedOrderIdsRef.current.has(o.id) || o.status === 'anulado_admin')
+      (o) => o && !deletedOrderIdsRef.current.has(o.id)
     );
 
     if (typeof window !== 'undefined') {

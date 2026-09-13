@@ -204,10 +204,15 @@ export async function updateOrderStatus(orderId, status, extraMeta = {}) {
 
   orders = orders.map(updateFn);
   auditOrders = auditOrders.map(updateFn);
-  await persist();
 
   const updated = orders.find((o) => o.id === orderId) || auditOrders.find((o) => o.id === orderId);
+
+  // 1) Broadcast SSE instantáneo a todas las pantallas (0ms de latencia)
   broadcast('ORDER_UPDATED', { orderId, status, extraMeta, order: updated });
+
+  // 2) Persistir a disco y Supabase en segundo plano sin demorar la respuesta
+  persist().catch((e) => console.warn('[OrderStore] persist error:', e?.message));
+
   return updated;
 }
 
@@ -215,25 +220,33 @@ export async function deleteOrder(orderId, motivo = 'Anulado por Administrador')
   orders = orders.filter((o) => o.id !== orderId);
   auditOrders = auditOrders.map((o) =>
     o.id === orderId
-      ? { ...o, status: 'anulado_admin', anuladoAt: new Date().toISOString(), anuladoMotivo: motivo }
+      ? { ...o, status: 'anulado_admin', anuladoAt: new Date().toISOString(), anuladoMotivo: motivo, updatedAt: new Date().toISOString() }
       : o
   );
-  await persist();
+
+  // 1) Broadcast SSE instantáneo (0ms)
   broadcast('ORDER_DELETED', { orderId, motivo });
+
+  // 2) Persistir en segundo plano
+  persist().catch((e) => console.warn('[OrderStore] persist error:', e?.message));
 }
 
 export async function purgeOrder(orderId) {
   orders = orders.filter((o) => o.id !== orderId);
   auditOrders = auditOrders.filter((o) => o.id !== orderId);
-  await persist();
+
+  // 1) Broadcast SSE instantáneo (0ms)
   broadcast('ORDER_PURGED', { orderId });
+
+  // 2) Persistir en segundo plano
+  persist().catch((e) => console.warn('[OrderStore] persist error:', e?.message));
 }
 
 export async function resetAllOrders() {
   orders = [];
   auditOrders = [];
-  await persist();
   broadcast('ORDERS_RESET', {});
+  persist().catch((e) => console.warn('[OrderStore] persist error:', e?.message));
 }
 
 export async function bulkSyncOrders(newOrders, newAudit, shouldSyncSupabase = true) {

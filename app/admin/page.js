@@ -63,6 +63,7 @@ export default function AdminPOSPage() {
     markOrderInvoiced,
     addCustomAdditionToOrder,
     deleteOrder,
+    purgeAuditOrder,
     resetAllOrdersData,
     posBackupFolderName,
     updatePosBackupFolderName,
