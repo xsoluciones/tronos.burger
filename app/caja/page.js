@@ -113,15 +113,79 @@ export default function CajaPage() {
   const [invoiceSearchQuery, setInvoiceSearchQuery] = useState('');
   const [previewInvoiceOrder, setPreviewInvoiceOrder] = useState(null);
 
-  // Unificación de todas las facturas generadas (activas + histórico de auditoría)
+  // Unificación de todas las facturas generadas (activas + histórico de auditoría) SIN DUPLICADOS
   const invoicedOrders = useMemo(() => {
+    const deletedSet = new Set();
+    if (typeof window !== 'undefined') {
+      try {
+        const savedDeleted = JSON.parse(localStorage.getItem('tronos-deleted-order-ids') || '[]');
+        if (Array.isArray(savedDeleted)) {
+          savedDeleted.forEach((id) => {
+            if (id) {
+              const cleaned = String(id).trim().replace(/^#+/, '').toLowerCase();
+              if (cleaned) deletedSet.add(cleaned);
+            }
+          });
+        }
+      } catch (e) {}
+    }
+
     const map = new Map();
-    (auditOrders || []).forEach((o) => {
-      if (o && o.id && o.status !== 'anulado_admin') map.set(o.id, o);
-    });
-    (orders || []).forEach((o) => {
-      if (o && o.id && o.status !== 'anulado_admin') map.set(o.id, o);
-    });
+    const seenContentKeys = new Set();
+
+    const processOrder = (o) => {
+      if (!o || !o.id) return;
+      const rawId = String(o.id).trim();
+      const normId = rawId.replace(/^#+/, '').toLowerCase();
+      if (!normId) return;
+
+      // Descartar si el pedido fue eliminado/purgado o marcado como anulado
+      if (
+        o.status === 'anulado_admin' ||
+        o.status === 'anulado' ||
+        o.auditFlag === 'anulado' ||
+        deletedSet.has(normId) ||
+        deletedSet.has(rawId.toLowerCase())
+      ) {
+        return;
+      }
+
+      // Si ya existe un pedido con el mismo código/ID (numérico, string o con #), conservar el más actualizado
+      if (map.has(normId)) {
+        const existing = map.get(normId);
+        const existingTime = new Date(existing.date || existing.invoicedAt || existing.createdAt || 0).getTime();
+        const newTime = new Date(o.date || o.invoicedAt || o.createdAt || 0).getTime();
+        if (newTime >= existingTime || (!existing.invoiced && o.invoiced)) {
+          map.set(normId, { ...existing, ...o });
+        }
+        return;
+      }
+
+      // Deduplicación por contenido idéntico en pedidos duplicados por doble clic o reintentos
+      const customerKey = (o.customer?.telefono || o.customer?.nombre || '').trim().toLowerCase();
+      const totalKey = Math.round(Number(o.total) || 0);
+      const itemsKey = (o.items || [])
+        .map((it) => `${it.name || ''}_${it.quantity || 1}`)
+        .sort()
+        .join('|');
+      const rawDate = o.date || o.invoicedAt || o.createdAt;
+      const timeMs = rawDate ? new Date(rawDate).getTime() : 0;
+      const timeWindow = !isNaN(timeMs) && timeMs > 0 ? Math.floor(timeMs / (1000 * 90)) : 0;
+      const contentKey = `${customerKey}_${totalKey}_${itemsKey}_${timeWindow}`;
+
+      if (customerKey && itemsKey && seenContentKeys.has(contentKey)) {
+        return;
+      }
+      if (customerKey && itemsKey) {
+        seenContentKeys.add(contentKey);
+      }
+
+      map.set(normId, o);
+    };
+
+    (auditOrders || []).forEach(processOrder);
+    (orders || []).forEach(processOrder);
+
     return Array.from(map.values()).sort(
       (a, b) => new Date(b.date || b.invoicedAt || b.createdAt || 0) - new Date(a.date || a.invoicedAt || a.createdAt || 0)
     );
@@ -1818,8 +1882,8 @@ export default function CajaPage() {
               }}
               title="Crear comanda manualmente para clientes presenciales o por llamada"
             >
-              <span style={{ fontSize: '13px' }}>➕</span>
-              <span>Crear Comanda Manual</span>
+              <span style={{ fontSize: '13px' }}>🧾</span>
+              <span>Crear Factura Manual</span>
             </button>
           </div>
 
@@ -3578,7 +3642,7 @@ export default function CajaPage() {
                                   fontSize: '11.5px',
                                 }}
                               >
-                                #{order.id}
+                                #{String(order.id).replace(/^#+/, '')}
                               </span>
                             </td>
                             <td style={{ color: '#64748b', whiteSpace: 'nowrap', fontSize: '11.5px' }}>
