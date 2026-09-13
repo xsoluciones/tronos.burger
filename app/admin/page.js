@@ -114,13 +114,13 @@ export default function AdminPOSPage() {
   const invoicedOrders = useMemo(() => {
     const map = new Map();
     (auditOrders || []).forEach((o) => {
-      if (o.invoiced) map.set(o.id, o);
+      if (o && o.id && o.status !== 'anulado_admin') map.set(o.id, o);
     });
     (orders || []).forEach((o) => {
-      if (o.invoiced) map.set(o.id, o);
+      if (o && o.id && o.status !== 'anulado_admin') map.set(o.id, o);
     });
     return Array.from(map.values()).sort(
-      (a, b) => new Date(b.invoicedAt || b.date || 0) - new Date(a.invoicedAt || a.date || 0)
+      (a, b) => new Date(b.date || b.invoicedAt || b.createdAt || 0) - new Date(a.date || a.invoicedAt || a.createdAt || 0)
     );
   }, [orders, auditOrders]);
 
@@ -488,10 +488,10 @@ export default function AdminPOSPage() {
     const pendingOrders = orders.filter((o) => o.status === 'pendiente').length;
     const kitchenOrders = orders.filter((o) => o.status === 'en_cocina').length;
     const inTransitOrders = orders.filter((o) => o.status === 'en_camino').length;
-    const deliveredOrders = orders.filter((o) => o.status === 'entregado').length;
+    const deliveredOrders = orders.filter((o) => o.status === 'entregado' && isOrderFromToday(o)).length;
     const returnedOrders = orders.filter((o) => o.status === 'devuelto').length;
     const totalSales = orders
-      .filter((o) => o.status === 'entregado')
+      .filter((o) => o.status === 'entregado' && isOrderFromToday(o))
       .reduce((sum, o) => sum + (o.total || 0), 0);
     const totalMenuItems = menuCategories.reduce((acc, cat) => acc + (cat.items?.length || 0), 0);
 
@@ -510,7 +510,12 @@ export default function AdminPOSPage() {
 
   // ── Cantidad de pedidos activos (sin entregados si están ocultos) ─
   const activeOrdersCount = useMemo(() => {
-    return orders.filter((o) => !hideDelivered || o.status !== 'entregado').length;
+    return orders.filter((o) => {
+      if (o.status === 'entregado') {
+        return !hideDelivered && isOrderFromToday(o);
+      }
+      return true;
+    }).length;
   }, [orders, hideDelivered]);
 
   // ── Filtrado de Pedidos ──────────────────────────────────────
@@ -518,7 +523,13 @@ export default function AdminPOSPage() {
     return orders.filter((order) => {
       let matchesFilter = false;
       if (orderFilter === 'all') {
-        matchesFilter = hideDelivered ? order.status !== 'entregado' : true;
+        if (order.status === 'entregado') {
+          matchesFilter = !hideDelivered && isOrderFromToday(order);
+        } else {
+          matchesFilter = true;
+        }
+      } else if (orderFilter === 'entregado') {
+        matchesFilter = order.status === 'entregado' && isOrderFromToday(order);
       } else {
         matchesFilter = order.status === orderFilter;
       }
@@ -2141,9 +2152,9 @@ export default function AdminPOSPage() {
                 cursor: 'pointer',
                 boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
               }}
-              title="Ver historial de facturas generadas y descargadas"
+              title="Ver historial general de ventas, comandas y facturas de todos los días"
             >
-              <span>📁 Facturas Descargadas</span>
+              <span>📁 Historial ({invoicedOrders.length})</span>
               <span
                 style={{
                   background: invoicedOrders.length > 0 ? '#16a34a' : '#94a3b8',
@@ -3384,7 +3395,7 @@ export default function AdminPOSPage() {
                   { key: 'pendiente', name: 'Pendientes', count: metrics.pendingOrders },
                   { key: 'en_cocina', name: 'En Cocina', count: metrics.kitchenOrders },
                   { key: 'en_camino', name: 'En Camino', count: metrics.inTransitOrders },
-                  { key: 'entregado', name: 'Entregados', count: metrics.deliveredOrders },
+                  { key: 'entregado', name: 'Entregados (Hoy)', count: metrics.deliveredOrders },
                   { key: 'devuelto', name: 'Devueltos', count: metrics.returnedOrders },
                 ].map((f) => {
                   const isSelected = orderFilter === f.key;
@@ -6244,7 +6255,7 @@ export default function AdminPOSPage() {
                 <div>
                   <div className="d-flex align-items-center gap-2">
                     <h5 className="m-0 fw-bold" style={{ fontSize: '16px' }}>
-                      Facturas Generadas y Descargadas
+                      Historial General de Ventas y Facturas
                     </h5>
                     <span
                       style={{
@@ -6257,11 +6268,11 @@ export default function AdminPOSPage() {
                         borderRadius: '12px',
                       }}
                     >
-                      {invoicedOrders.length} {invoicedOrders.length === 1 ? 'factura' : 'facturas'}
+                      {invoicedOrders.length} {invoicedOrders.length === 1 ? 'registro' : 'registros'}
                     </span>
                   </div>
                   <div style={{ fontSize: '11.5px', color: '#64748b' }}>
-                    Historial de facturas electrónicas (.html) y comprobantes térmicos emitidos
+                    Historial de todas las ventas y facturas organizadas por fecha (excluye pedidos eliminados)
                   </div>
                 </div>
               </div>

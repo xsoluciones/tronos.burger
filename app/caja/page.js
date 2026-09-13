@@ -99,13 +99,13 @@ export default function CajaPage() {
   const invoicedOrders = useMemo(() => {
     const map = new Map();
     (auditOrders || []).forEach((o) => {
-      if (o.invoiced) map.set(o.id, o);
+      if (o && o.id && o.status !== 'anulado_admin') map.set(o.id, o);
     });
     (orders || []).forEach((o) => {
-      if (o.invoiced) map.set(o.id, o);
+      if (o && o.id && o.status !== 'anulado_admin') map.set(o.id, o);
     });
     return Array.from(map.values()).sort(
-      (a, b) => new Date(b.invoicedAt || b.date || 0) - new Date(a.invoicedAt || a.date || 0)
+      (a, b) => new Date(b.date || b.invoicedAt || b.createdAt || 0) - new Date(a.date || a.invoicedAt || a.createdAt || 0)
     );
   }, [orders, auditOrders]);
 
@@ -429,10 +429,10 @@ export default function CajaPage() {
     const pendingOrders = orders.filter((o) => o.status === 'pendiente').length;
     const kitchenOrders = orders.filter((o) => o.status === 'en_cocina').length;
     const inTransitOrders = orders.filter((o) => o.status === 'en_camino').length;
-    const deliveredOrders = orders.filter((o) => o.status === 'entregado').length;
+    const deliveredOrders = orders.filter((o) => o.status === 'entregado' && isOrderFromToday(o)).length;
     const returnedOrders = orders.filter((o) => o.status === 'devuelto').length;
     const totalSales = orders
-      .filter((o) => o.status === 'entregado')
+      .filter((o) => o.status === 'entregado' && isOrderFromToday(o))
       .reduce((sum, o) => sum + (o.total || 0), 0);
 
     return {
@@ -448,7 +448,12 @@ export default function CajaPage() {
 
   // ── Cantidad de pedidos activos (sin entregados si están ocultos) ─
   const activeOrdersCount = useMemo(() => {
-    return orders.filter((o) => !hideDelivered || o.status !== 'entregado').length;
+    return orders.filter((o) => {
+      if (o.status === 'entregado') {
+        return !hideDelivered && isOrderFromToday(o);
+      }
+      return true;
+    }).length;
   }, [orders, hideDelivered]);
 
   // ── Filtrado de Pedidos ───────────────────────────────────────────
@@ -465,11 +470,14 @@ export default function CajaPage() {
       if (orderFilter === 'pending') return order.status === 'pendiente';
       if (orderFilter === 'kitchen') return order.status === 'en_cocina';
       if (orderFilter === 'transit') return order.status === 'en_camino';
-      if (orderFilter === 'delivered') return order.status === 'entregado';
+      if (orderFilter === 'delivered') return order.status === 'entregado' && isOrderFromToday(order);
       if (orderFilter === 'returned') return order.status === 'devuelto';
       
-      // Vista 'Todos': ocultar entregados si hideDelivered está activado
-      if (hideDelivered && order.status === 'entregado') return false;
+      // Vista 'Todos': nunca mostrar entregados de días anteriores como tarjetas activas (están en Historial)
+      if (order.status === 'entregado') {
+        if (hideDelivered) return false;
+        return isOrderFromToday(order);
+      }
       return true;
     });
   }, [orders, orderFilter, orderSearch, hideDelivered]);
@@ -1443,6 +1451,25 @@ export default function CajaPage() {
               )}
             </div>
 
+            {/* Botón Historial de Ventas y Facturas */}
+            <button
+              onClick={() => setShowInvoicesModal(true)}
+              className="btn btn-sm d-flex align-items-center gap-1.5"
+              style={{
+                background: invoicedOrders.length > 0 ? '#ecfdf5' : (theme === 'light' ? '#f8fafc' : '#141524'),
+                color: invoicedOrders.length > 0 ? '#15803d' : (theme === 'light' ? '#334155' : '#cbd5e1'),
+                border: `1px solid ${invoicedOrders.length > 0 ? '#86efac' : (theme === 'light' ? '#cbd5e1' : '#262940')}`,
+                borderRadius: '8px',
+                padding: '5px 12px',
+                fontSize: '12px',
+                fontWeight: 700,
+                cursor: 'pointer',
+              }}
+              title="Ver historial general de ventas, comandas y facturas de todos los días"
+            >
+              <span>📁 Historial ({invoicedOrders.length})</span>
+            </button>
+
             {/* Selector de Carpeta Local PC */}
             <button
               onClick={handleSelectFolder}
@@ -1600,7 +1627,7 @@ export default function CajaPage() {
               <div className="d-flex align-items-center gap-1.5 mb-1">
                 <IconCheckCircle size={15} style={{ color: '#16a34a' }} />
                 <span style={{ fontSize: '10.5px', fontWeight: 800, textTransform: 'uppercase', color: theme === 'light' ? '#64748b' : '#8f94ba' }}>
-                  Entregados
+                  Entregados (Hoy)
                 </span>
               </div>
               <span style={{ fontSize: '24px', fontWeight: 900, color: '#dc2626' }}>
@@ -1674,7 +1701,7 @@ export default function CajaPage() {
               { key: 'pending', name: 'Pendientes', count: metrics.pendingOrders },
               { key: 'kitchen', name: 'En Cocina', count: metrics.kitchenOrders },
               { key: 'transit', name: 'En Camino', count: metrics.inTransitOrders },
-              { key: 'delivered', name: 'Entregados', count: metrics.deliveredOrders },
+              { key: 'delivered', name: 'Entregados (Hoy)', count: metrics.deliveredOrders },
               { key: 'returned', name: 'Devueltos', count: metrics.returnedOrders },
             ].map((f) => {
               const isSelected = orderFilter === f.key;
@@ -3287,6 +3314,339 @@ export default function CajaPage() {
                   Cancelar
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── MODAL: HISTORIAL GENERAL DE VENTAS Y FACTURAS (CAJA) ── */}
+      {showInvoicesModal && (
+        <div
+          className="position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center p-3"
+          style={{
+            background: 'rgba(0, 0, 0, 0.65)',
+            backdropFilter: 'blur(4px)',
+            zIndex: 1050,
+          }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowInvoicesModal(false);
+          }}
+        >
+          <div
+            className="rounded-4 shadow-2xl d-flex flex-column"
+            style={{
+              maxWidth: '960px',
+              width: '100%',
+              maxHeight: '90vh',
+              background: '#ffffff',
+              color: '#111111',
+              border: '1px solid #e2e8f0',
+              overflow: 'hidden',
+            }}
+          >
+            {/* Header del Modal */}
+            <div
+              className="px-4 py-3 border-bottom d-flex justify-content-between align-items-center"
+              style={{
+                background: '#f8fafc',
+                borderColor: '#e2e8f0',
+              }}
+            >
+              <div className="d-flex align-items-center gap-2.5">
+                <div
+                  style={{
+                    width: '38px',
+                    height: '38px',
+                    borderRadius: '10px',
+                    background: '#15803d',
+                    color: '#ffffff',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: '19px',
+                  }}
+                >
+                  📁
+                </div>
+                <div>
+                  <div className="d-flex align-items-center gap-2">
+                    <h5 className="m-0 fw-bold" style={{ fontSize: '16px' }}>
+                      Historial General de Ventas y Facturas
+                    </h5>
+                    <span
+                      style={{
+                        background: '#dcfce7',
+                        color: '#15803d',
+                        border: '1px solid #bbf7d0',
+                        fontSize: '11px',
+                        fontWeight: 800,
+                        padding: '1px 8px',
+                        borderRadius: '12px',
+                      }}
+                    >
+                      {invoicedOrders.length} {invoicedOrders.length === 1 ? 'registro' : 'registros'}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: '11.5px', color: '#64748b' }}>
+                    Historial de todas las ventas y facturas organizadas por fecha (excluye pedidos eliminados)
+                  </div>
+                </div>
+              </div>
+
+              <button
+                onClick={() => setShowInvoicesModal(false)}
+                className="btn btn-sm d-flex align-items-center justify-content-center"
+                style={{
+                  width: '32px',
+                  height: '32px',
+                  borderRadius: '8px',
+                  background: 'transparent',
+                  border: '1px solid transparent',
+                  color: '#64748b',
+                }}
+                title="Cerrar"
+              >
+                <IconX size={18} />
+              </button>
+            </div>
+
+            {/* Barra de Búsqueda y Selector de Carpeta */}
+            <div
+              className="p-3 border-bottom d-flex flex-wrap align-items-center justify-content-between gap-2"
+              style={{
+                background: '#ffffff',
+                borderColor: '#e2e8f0',
+              }}
+            >
+              <div className="position-relative" style={{ minWidth: '260px', flex: 1 }}>
+                <IconSearch
+                  size={15}
+                  style={{
+                    position: 'absolute',
+                    left: '12px',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    color: '#94a3b8',
+                  }}
+                />
+                <input
+                  type="text"
+                  value={invoiceSearchQuery}
+                  onChange={(e) => setInvoiceSearchQuery(e.target.value)}
+                  placeholder="Buscar por #orden, cliente o teléfono..."
+                  className="form-control form-control-sm ps-4"
+                  style={{
+                    paddingLeft: '34px',
+                    borderRadius: '8px',
+                    border: '1px solid #cbd5e1',
+                    background: '#f8fafc',
+                    color: '#0f172a',
+                    fontSize: '12.5px',
+                  }}
+                />
+              </div>
+
+              {/* Conexión de Carpeta */}
+              <div className="d-flex align-items-center gap-2">
+                <span style={{ fontSize: '11.5px', color: '#64748b' }}>
+                  Carpeta PC: <strong>{posBackupFolderName || 'Descargas predeterminadas'}</strong>
+                </span>
+                <button
+                  onClick={handleSelectFolder}
+                  className="btn btn-sm"
+                  style={{
+                    background: '#f1f5f9',
+                    border: '1px solid #cbd5e1',
+                    color: '#334155',
+                    fontSize: '11.5px',
+                    fontWeight: 700,
+                    borderRadius: '6px',
+                    padding: '4px 10px',
+                  }}
+                >
+                  Cambiar Carpeta
+                </button>
+              </div>
+            </div>
+
+            {/* Cuerpo / Listado de Facturas */}
+            <div className="p-3 overflow-auto" style={{ maxHeight: 'calc(90vh - 160px)' }}>
+              {filteredInvoicedOrders.length === 0 ? (
+                <div className="text-center py-5">
+                  <div style={{ fontSize: '42px', marginBottom: '8px' }}>🧾</div>
+                  <h6 className="fw-bold mb-1">
+                    {invoicedOrders.length === 0
+                      ? 'Aún no hay registros en el historial'
+                      : 'No se encontraron registros con ese criterio'}
+                  </h6>
+                  <p style={{ fontSize: '12px', color: '#64748b', maxWidth: '420px', margin: '0 auto' }}>
+                    {invoicedOrders.length === 0
+                      ? 'Cuando se registren o entreguen pedidos, podrás consultar su factura y detalles organizados aquí.'
+                      : 'Prueba buscando con otro término o borra el filtro de búsqueda.'}
+                  </p>
+                </div>
+              ) : (
+                <div className="table-responsive">
+                  <table className="table table-hover align-middle mb-0" style={{ fontSize: '12.5px' }}>
+                    <thead
+                      style={{
+                        background: 'rgba(0,0,0,0.03)',
+                        color: '#475569',
+                      }}
+                    >
+                      <tr>
+                        <th style={{ padding: '8px 12px' }}>CÓDIGO</th>
+                        <th style={{ padding: '8px 12px' }}>FECHA / HORA</th>
+                        <th style={{ padding: '8px 12px' }}>CLIENTE</th>
+                        <th style={{ padding: '8px 12px' }}>DETALLE</th>
+                        <th style={{ padding: '8px 12px' }}>TOTAL</th>
+                        <th style={{ padding: '8px 12px', textAlign: 'right' }}>ACCIONES</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredInvoicedOrders.map((order) => {
+                        const itemsSummary = (order.items || [])
+                          .map((it) => `${it.quantity || 1}x ${it.name}`)
+                          .join(', ');
+                        const dateFormatted = new Date(order.invoicedAt || order.date || order.createdAt || Date.now()).toLocaleString('es-CO', {
+                          month: 'short',
+                          day: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        });
+
+                        return (
+                          <tr key={order.id}>
+                            <td style={{ fontWeight: 900, whiteSpace: 'nowrap' }}>
+                              <span
+                                style={{
+                                  background: '#0f172a',
+                                  color: '#ffffff',
+                                  padding: '2px 8px',
+                                  borderRadius: '5px',
+                                  fontSize: '11.5px',
+                                }}
+                              >
+                                #{order.id}
+                              </span>
+                            </td>
+                            <td style={{ color: '#64748b', whiteSpace: 'nowrap', fontSize: '11.5px' }}>
+                              {dateFormatted}
+                            </td>
+                            <td>
+                              <div style={{ fontWeight: 700, color: '#0f172a' }}>
+                                {order.customer?.nombre || 'Consumidor Final'}
+                              </div>
+                              <div style={{ fontSize: '11px', color: '#64748b' }}>
+                                📞 {order.customer?.telefono || 'N/A'} • 📍 {order.customer?.direccion || 'Local'}
+                              </div>
+                            </td>
+                            <td style={{ maxWidth: '240px' }}>
+                              <div
+                                style={{
+                                  fontSize: '11.5px',
+                                  color: '#475569',
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis',
+                                  whiteSpace: 'nowrap',
+                                }}
+                                title={itemsSummary}
+                              >
+                                {itemsSummary}
+                              </div>
+                            </td>
+                            <td style={{ fontWeight: 900, color: '#16a34a', whiteSpace: 'nowrap' }}>
+                              {formatPrice(order.total || 0)}
+                            </td>
+                            <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                              <div className="d-flex align-items-center justify-content-end gap-1.5">
+                                {/* Ver Factura */}
+                                <button
+                                  onClick={() => setPreviewInvoiceOrder(order)}
+                                  className="btn btn-sm d-inline-flex align-items-center gap-1"
+                                  style={{
+                                    background: '#eff6ff',
+                                    color: '#1d4ed8',
+                                    border: '1px solid #bfdbfe',
+                                    borderRadius: '6px',
+                                    padding: '4px 8px',
+                                    fontSize: '11.5px',
+                                    fontWeight: 700,
+                                  }}
+                                  title="Ver factura electrónica"
+                                >
+                                  <span>👁️ Ver</span>
+                                </button>
+
+                                {/* Descargar HTML */}
+                                <button
+                                  onClick={() => saveElectronicInvoice(order)}
+                                  className="btn btn-sm d-inline-flex align-items-center gap-1"
+                                  style={{
+                                    background: '#ecfdf5',
+                                    color: '#047857',
+                                    border: '1px solid #a7f3d0',
+                                    borderRadius: '6px',
+                                    padding: '4px 8px',
+                                    fontSize: '11.5px',
+                                    fontWeight: 700,
+                                  }}
+                                  title="Descargar factura en .html"
+                                >
+                                  <span>📥 Descargar</span>
+                                </button>
+
+                                {/* Re-imprimir 2 Copias Térmicas */}
+                                <button
+                                  onClick={() => handleReprintReceipt(order)}
+                                  className="btn btn-sm d-inline-flex align-items-center gap-1"
+                                  style={{
+                                    background: '#f8fafc',
+                                    color: '#334155',
+                                    border: '1px solid #cbd5e1',
+                                    borderRadius: '6px',
+                                    padding: '4px 8px',
+                                    fontSize: '11.5px',
+                                    fontWeight: 700,
+                                  }}
+                                  title="Reimprimir 2 tickets térmicos sin hoja en blanco"
+                                >
+                                  <span>🖨️ Imprimir</span>
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* Footer del Modal */}
+            <div
+              className="p-3 border-top d-flex justify-content-between align-items-center"
+              style={{
+                background: '#f8fafc',
+                borderColor: '#e2e8f0',
+              }}
+            >
+              <div style={{ fontSize: '11.5px', color: '#64748b' }}>
+                Total acumulado: <strong>{formatPrice(filteredInvoicedOrders.reduce((acc, o) => acc + (o.total || 0), 0))}</strong>
+              </div>
+              <button
+                onClick={() => setShowInvoicesModal(false)}
+                className="btn btn-sm px-4 fw-bold"
+                style={{
+                  background: '#0f172a',
+                  color: '#ffffff',
+                  borderRadius: '8px',
+                  fontSize: '12px',
+                }}
+              >
+                Cerrar
+              </button>
             </div>
           </div>
         </div>

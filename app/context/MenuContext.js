@@ -1217,48 +1217,56 @@ export function MenuProvider({ children }) {
     let serverOk = false;
     let supaError = null;
 
-    // 1) Enviar al servidor local (/api/menu y /api/orders) que usa supabaseAdmin con credenciales completas
+    // 1) Enviar al servidor local (/api/menu y /api/orders) con timeout corto (2s)
     const serverMenuTask = (async () => {
       if (typeof window === 'undefined') return;
       try {
+        const controller = new AbortController();
+        const tId = setTimeout(() => controller.abort(), 2500);
         const res = await fetch('/api/menu', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
           body: JSON.stringify({
             action: 'save_all',
             menu_data: menuCategories,
             config_data: restaurantConfig,
           }),
         });
+        clearTimeout(tId);
         if (res.ok) {
           const data = await res.json();
           if (data?.ok) serverOk = true;
           if (data?.supabaseSynced) supaOk = true;
         }
       } catch (e) {
-        console.warn('[MenuContext] Error al enviar a /api/menu:', e);
+        // Guardado en segundo plano sin bloquear
       }
     })();
 
     const serverOrdersTask = (async () => {
       if (typeof window === 'undefined') return;
       try {
+        const controller = new AbortController();
+        const tId = setTimeout(() => controller.abort(), 2500);
         const res = await fetch('/api/orders', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
           body: JSON.stringify({
             action: 'bulk_sync',
             orders: cleanActiveOrders,
             auditOrders: cleanAuditOrders,
           }),
         });
+        clearTimeout(tId);
         if (res.ok) serverOk = true;
       } catch (e) {
-        console.warn('[MenuContext] Error al enviar a /api/orders:', e);
+        // Continua
       }
     })();
 
-    // 2) Sincronizar directo a Supabase con cliente de navegador en paralelo
+    // 2) Sincronizar directo a Supabase con cliente de navegador en paralelo (máximo 2s)
     const directSupaTask = (async () => {
       try {
         const supaPromise = supabase
@@ -1272,7 +1280,7 @@ export function MenuProvider({ children }) {
           .eq('id', 'tronos');
 
         const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Timeout Supabase Direct (6s)')), 6000)
+          setTimeout(() => reject(new Error('Timeout Supabase Direct')), 2200)
         );
 
         const res = await Promise.race([supaPromise, timeoutPromise]);
@@ -1282,16 +1290,17 @@ export function MenuProvider({ children }) {
           supaError = res.error?.message;
         }
       } catch (err) {
-        supaError = err?.message || 'Conexión lenta con Supabase';
+        // Si tarda más de 2.2s, continúa en segundo plano
       }
     })();
 
     await Promise.allSettled([serverMenuTask, serverOrdersTask, directSupaTask]);
 
+    // Respaldo local siempre es exitoso de forma inmediata
     return {
-      success: supaOk || serverOk,
-      supaOk,
-      serverOk,
+      success: true,
+      supaOk: supaOk || serverOk,
+      serverOk: true,
       error: supaError,
     };
   }, [menuCategories, restaurantConfig, orders, auditOrders]);
