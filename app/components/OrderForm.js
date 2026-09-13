@@ -39,7 +39,7 @@ export default function OrderForm({ onClose }) {
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = (e) => {
     e.preventDefault();
     if (isSubmitting) return;
     if (!validate()) return;
@@ -105,37 +105,29 @@ export default function OrderForm({ onClose }) {
     const whatsappNumber = cleanWhatsAppNumber(rawNumber);
     const url = `https://wa.me/${whatsappNumber}?text=${encoded}`;
 
-    // Registrar pedido en el sistema POS antes de abrir WhatsApp
+    // 1) Registrar pedido en POS (instantáneo, fire-and-forget en background)
     if (addOrder) {
-      try {
-        await addOrder({
-          id: orderId,
-          date: new Date().toISOString(),
-          orderType: orderType,
-          deliveryFee: deliveryFee,
-          customer: {
-            nombre: form.nombre.trim(),
-            telefono: form.telefono.trim(),
-            direccion: orderType === 'domicilio' ? form.direccion.trim() : '🏪 Recoge en local (Yo lo voy a buscar)',
-            descripcion: orderType === 'domicilio' ? form.descripcion.trim() : 'Yo lo voy a buscar',
-          },
-          items: JSON.parse(JSON.stringify(cart)),
-          total: finalTotal,
-          status: 'pendiente',
-        });
-      } catch (err) {
-        console.error('[OrderForm] Error al registrar pedido:', err);
-      }
+      addOrder({
+        id: orderId,
+        date: new Date().toISOString(),
+        orderType: orderType,
+        deliveryFee: deliveryFee,
+        customer: {
+          nombre: form.nombre.trim(),
+          telefono: form.telefono.trim(),
+          direccion: orderType === 'domicilio' ? form.direccion.trim() : '🏪 Recoge en local (Yo lo voy a buscar)',
+          descripcion: orderType === 'domicilio' ? form.descripcion.trim() : 'Yo lo voy a buscar',
+        },
+        items: JSON.parse(JSON.stringify(cart)),
+        total: finalTotal,
+        status: 'pendiente',
+      });
     }
 
-    // Abrir WhatsApp con el pedido
-    try {
-      window.open(url, '_blank');
-    } catch (e) {
-      window.location.href = url;
-    }
+    // 2) Abrir WhatsApp inmediatamente
+    window.open(url, '_blank');
 
-    // Limpiar carrito y mostrar modal con botón de seguimiento
+    // 3) Limpiar carrito y mostrar modal con botón de seguimiento
     clearCart();
     setSuccess(true);
     setIsSubmitting(false);

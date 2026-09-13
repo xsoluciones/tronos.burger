@@ -371,7 +371,7 @@ export function MenuProvider({ children }) {
       (o) => o && o.status !== 'anulado_admin' && !deletedOrderIdsRef.current.has(o.id)
     );
     const cleanAuditOrders = (auditList || []).filter(
-      (o) => o && !deletedOrderIdsRef.current.has(o.id) || o?.status === 'anulado_admin'
+      (o) => o && (!deletedOrderIdsRef.current.has(o.id) || o.status === 'anulado_admin')
     );
 
     // 1) Enviar al servidor local (/api/orders) que sincroniza en disco y con Supabase server-side
@@ -405,7 +405,7 @@ export function MenuProvider({ children }) {
     }
   }, []);
 
-  const addOrder = useCallback(async (newOrder) => {
+  const addOrder = useCallback((newOrder) => {
     if (!newOrder || !newOrder.id) return;
 
     // Evitar procesar pedidos duplicados si ya existen con el mismo ID
@@ -431,6 +431,7 @@ export function MenuProvider({ children }) {
     const filteredAudit = currentAudit.filter((o) => o && o.id !== orderWithMeta.id);
     const nextAudit = [orderWithMeta, ...filteredAudit];
 
+    // 1) INSTANTÁNEO: Actualizar React state + localStorage + BroadcastChannel (sin demora)
     setOrders(nextOrders);
     setAuditOrders(nextAudit);
 
@@ -449,73 +450,20 @@ export function MenuProvider({ children }) {
       }
     }
 
-    // 1) Enviar inmediatamente a /api/orders (esto difunde SSE 'NEW_ORDER' en tiempo real a Admin, Cocina y Caja)
+    // 2) BACKGROUND (fire-and-forget): Enviar a /api/orders → SSE broadcast en tiempo real
     if (typeof window !== 'undefined') {
-      try {
-        await fetch('/api/orders', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ order: orderWithMeta }),
-        });
-      } catch (err) {
-        console.warn('[MenuContext] Error enviando a /api/orders:', err);
-      }
+      fetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ order: orderWithMeta }),
+      }).catch((err) => console.warn('[MenuContext] Error enviando a /api/orders:', err));
     }
 
-    // 2) Sincronizar en Supabase garantizando fusión segura con los pedidos remotos
-    try {
-      const { data: supaData } = await supabase
-        .from('app_state')
-        .select('orders_data, audit_orders_data')
-        .eq('id', 'tronos')
-        .single();
-
-      let remoteOrders = [];
-      let remoteAudit = [];
-      if (supaData) {
-        remoteOrders = supaData.orders_data || [];
-        if (typeof remoteOrders === 'string') {
-          try { remoteOrders = JSON.parse(remoteOrders); } catch (e) {}
-        }
-        remoteAudit = supaData.audit_orders_data || [];
-        if (typeof remoteAudit === 'string') {
-          try { remoteAudit = JSON.parse(remoteAudit); } catch (e) {}
-        }
-      }
-
-      const mergedActive = [
-        orderWithMeta,
-        ...(Array.isArray(remoteOrders) ? remoteOrders : []).filter(
-          (o) => o && o.id !== orderWithMeta.id && o.status !== 'anulado_admin'
-        ),
-      ];
-
-      const mergedAudit = [
-        orderWithMeta,
-        ...(Array.isArray(remoteAudit) ? remoteAudit : []).filter(
-          (o) => o && o.id !== orderWithMeta.id
-        ),
-      ];
-
-      const supaPromise = supabase
-        .from('app_state')
-        .update({
-          orders_data: mergedActive,
-          audit_orders_data: mergedAudit,
-        })
-        .eq('id', 'tronos');
-
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Timeout Supabase Orders (5s)')), 5000)
-      );
-
-      await Promise.race([supaPromise, timeoutPromise]);
-    } catch (e) {
-      console.warn('[MenuContext] Error guardando pedido en Supabase:', e?.message);
-    }
+    // 3) BACKGROUND (fire-and-forget): Sincronizar con Supabase
+    saveOrdersToSupabase(nextOrders, nextAudit);
 
     return orderWithMeta;
-  }, [orders, auditOrders]);
+  }, [orders, auditOrders, saveOrdersToSupabase]);
 
   const updateOrderStatus = useCallback((orderId, status, extraMeta = {}) => {
     const now = new Date().toISOString();
@@ -1174,7 +1122,7 @@ export function MenuProvider({ children }) {
       (o) => o && o.status !== 'anulado_admin' && !deletedOrderIdsRef.current.has(o.id)
     );
     const cleanAuditOrders = (auditOrders || []).filter(
-      (o) => o && !deletedOrderIdsRef.current.has(o.id) || o?.status === 'anulado_admin'
+      (o) => o && (!deletedOrderIdsRef.current.has(o.id) || o.status === 'anulado_admin')
     );
 
     if (typeof window !== 'undefined') {
@@ -1188,6 +1136,8 @@ export function MenuProvider({ children }) {
 
     let serverOk = false;
     try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
       const res = await fetch('/api/menu', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1196,11 +1146,15 @@ export function MenuProvider({ children }) {
           menu_data: menuCategories,
           config_data: restaurantConfig,
         }),
+        signal: controller.signal,
       });
+      clearTimeout(timeout);
       if (res.ok) serverOk = true;
     } catch (e) {}
 
     try {
+      const controller2 = new AbortController();
+      const timeout2 = setTimeout(() => controller2.abort(), 5000);
       await fetch('/api/orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1209,7 +1163,9 @@ export function MenuProvider({ children }) {
           orders: cleanActiveOrders,
           auditOrders: cleanAuditOrders,
         }),
+        signal: controller2.signal,
       });
+      clearTimeout(timeout2);
     } catch (e) {}
 
     let supaOk = false;

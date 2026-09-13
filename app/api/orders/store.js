@@ -77,34 +77,22 @@ async function syncToSupabase() {
   isSyncingToSupabase = true;
   pendingSupabaseSync = false;
 
-  let attempts = 0;
-  let success = false;
+  try {
+    const supaPromise = supabase
+      .from('app_state')
+      .update({
+        orders_data: orders,
+        audit_orders_data: auditOrders,
+      })
+      .eq('id', 'tronos');
 
-  while (attempts < 3 && !success) {
-    attempts++;
-    try {
-      const { data, error } = await supabase
-        .from('app_state')
-        .update({
-          orders_data: orders,
-          audit_orders_data: auditOrders,
-        })
-        .eq('id', 'tronos')
-        .select();
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Timeout syncToSupabase (4s)')), 4000)
+    );
 
-      if (!error && data) {
-        success = true;
-        break;
-      }
-      if (error) {
-        console.warn(`[OrderStore] Supabase sync intento ${attempts} falló:`, error.message);
-      }
-    } catch (e) {
-      console.warn(`[OrderStore] Error guardando pedidos en Supabase (intento ${attempts}):`, e?.message);
-    }
-    if (!success && attempts < 3) {
-      await new Promise((r) => setTimeout(r, 600));
-    }
+    await Promise.race([supaPromise, timeoutPromise]);
+  } catch (e) {
+    console.warn('[OrderStore] Supabase sync error:', e?.message);
   }
 
   isSyncingToSupabase = false;
@@ -195,8 +183,13 @@ export async function addOrder(newOrder) {
 
   orders = [orderWithMeta, ...orders];
   auditOrders = [orderWithMeta, ...auditOrders.filter((o) => o.id !== orderWithMeta.id)];
-  await persist();
+
+  // 1) Broadcast SSE INMEDIATAMENTE (antes de Supabase) para que Admin/Cocina/Caja lo vean al instante
   broadcast('NEW_ORDER', orderWithMeta);
+
+  // 2) Persistir a disco + Supabase en background (no bloquea la respuesta HTTP)
+  persist().catch((e) => console.warn('[OrderStore] persist error:', e?.message));
+
   return orderWithMeta;
 }
 
