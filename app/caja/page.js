@@ -38,16 +38,20 @@ const formatPrice = (price) => {
 
 const isOrderFromToday = (order) => {
   if (!order) return false;
-  const rawDate = order.deliveredAt || order.date || order.createdAt || order.updatedAt;
-  if (!rawDate) return false;
-  const d = new Date(rawDate);
-  if (isNaN(d.getTime())) return false;
-  const now = new Date();
-  return (
-    d.getFullYear() === now.getFullYear() &&
-    d.getMonth() === now.getMonth() &&
-    d.getDate() === now.getDate()
-  );
+  try {
+    const rawDate = order.deliveredAt || order.date || order.createdAt || order.updatedAt;
+    if (!rawDate) return false;
+    const d = new Date(rawDate);
+    if (isNaN(d.getTime())) return false;
+    const now = new Date();
+    return (
+      d.getFullYear() === now.getFullYear() &&
+      d.getMonth() === now.getMonth() &&
+      d.getDate() === now.getDate()
+    );
+  } catch (e) {
+    return false;
+  }
 };
 
 export default function CajaPage() {
@@ -439,15 +443,16 @@ export default function CajaPage() {
 
   // ── Métricas Operativas de Caja ───────────────────────────────────
   const metrics = useMemo(() => {
-    const totalOrders = orders.length;
-    const pendingOrders = orders.filter((o) => o.status === 'pendiente').length;
-    const kitchenOrders = orders.filter((o) => o.status === 'en_cocina').length;
-    const inTransitOrders = orders.filter((o) => o.status === 'en_camino').length;
-    const deliveredOrders = orders.filter((o) => o.status === 'entregado' && isOrderFromToday(o)).length;
-    const returnedOrders = orders.filter((o) => o.status === 'devuelto').length;
-    const totalSales = orders
-      .filter((o) => o.status === 'entregado' && isOrderFromToday(o))
-      .reduce((sum, o) => sum + (o.total || 0), 0);
+    const list = Array.isArray(orders) ? orders : [];
+    const totalOrders = list.length;
+    const pendingOrders = list.filter((o) => o && o.status === 'pendiente').length;
+    const kitchenOrders = list.filter((o) => o && o.status === 'en_cocina').length;
+    const inTransitOrders = list.filter((o) => o && o.status === 'en_camino').length;
+    const deliveredOrders = list.filter((o) => o && o.status === 'entregado' && isOrderFromToday(o)).length;
+    const returnedOrders = list.filter((o) => o && o.status === 'devuelto').length;
+    const totalSales = list
+      .filter((o) => o && o.status === 'entregado' && isOrderFromToday(o))
+      .reduce((sum, o) => sum + (o?.total || 0), 0);
 
     return {
       totalOrders,
@@ -462,7 +467,9 @@ export default function CajaPage() {
 
   // ── Cantidad de pedidos activos (sin entregados si están ocultos) ─
   const activeOrdersCount = useMemo(() => {
-    return orders.filter((o) => {
+    const list = Array.isArray(orders) ? orders : [];
+    return list.filter((o) => {
+      if (!o) return false;
       if (o.status === 'entregado') {
         return !hideDelivered && isOrderFromToday(o);
       }
@@ -472,7 +479,9 @@ export default function CajaPage() {
 
   // ── Filtrado de Pedidos ───────────────────────────────────────────
   const filteredOrders = useMemo(() => {
-    return orders.filter((order) => {
+    const list = Array.isArray(orders) ? orders : [];
+    return list.filter((order) => {
+      if (!order) return false;
       const matchSearch =
         order.id?.toLowerCase().includes(orderSearch.toLowerCase()) ||
         order.customer?.nombre?.toLowerCase().includes(orderSearch.toLowerCase()) ||

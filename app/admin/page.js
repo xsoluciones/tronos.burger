@@ -41,16 +41,20 @@ import {
 
 const isOrderFromToday = (order) => {
   if (!order) return false;
-  const rawDate = order.deliveredAt || order.date || order.createdAt || order.updatedAt;
-  if (!rawDate) return false;
-  const d = new Date(rawDate);
-  if (isNaN(d.getTime())) return false;
-  const now = new Date();
-  return (
-    d.getFullYear() === now.getFullYear() &&
-    d.getMonth() === now.getMonth() &&
-    d.getDate() === now.getDate()
-  );
+  try {
+    const rawDate = order.deliveredAt || order.date || order.createdAt || order.updatedAt;
+    if (!rawDate) return false;
+    const d = new Date(rawDate);
+    if (isNaN(d.getTime())) return false;
+    const now = new Date();
+    return (
+      d.getFullYear() === now.getFullYear() &&
+      d.getMonth() === now.getMonth() &&
+      d.getDate() === now.getDate()
+    );
+  } catch (e) {
+    return false;
+  }
 };
 
 export default function AdminPOSPage() {
@@ -498,16 +502,17 @@ export default function AdminPOSPage() {
 
   // ── Estadísticas y Métricas ───────────────────────────────────
   const metrics = useMemo(() => {
-    const totalOrders = orders.length;
-    const pendingOrders = orders.filter((o) => o.status === 'pendiente').length;
-    const kitchenOrders = orders.filter((o) => o.status === 'en_cocina').length;
-    const inTransitOrders = orders.filter((o) => o.status === 'en_camino').length;
-    const deliveredOrders = orders.filter((o) => o.status === 'entregado' && isOrderFromToday(o)).length;
-    const returnedOrders = orders.filter((o) => o.status === 'devuelto').length;
-    const totalSales = orders
-      .filter((o) => o.status === 'entregado' && isOrderFromToday(o))
-      .reduce((sum, o) => sum + (o.total || 0), 0);
-    const totalMenuItems = menuCategories.reduce((acc, cat) => acc + (cat.items?.length || 0), 0);
+    const list = Array.isArray(orders) ? orders : [];
+    const totalOrders = list.length;
+    const pendingOrders = list.filter((o) => o && o.status === 'pendiente').length;
+    const kitchenOrders = list.filter((o) => o && o.status === 'en_cocina').length;
+    const inTransitOrders = list.filter((o) => o && o.status === 'en_camino').length;
+    const deliveredOrders = list.filter((o) => o && o.status === 'entregado' && isOrderFromToday(o)).length;
+    const returnedOrders = list.filter((o) => o && o.status === 'devuelto').length;
+    const totalSales = list
+      .filter((o) => o && o.status === 'entregado' && isOrderFromToday(o))
+      .reduce((sum, o) => sum + (o?.total || 0), 0);
+    const totalMenuItems = (menuCategories || []).reduce((acc, cat) => acc + (cat?.items?.length || 0), 0);
 
     return {
       totalOrders,
@@ -518,13 +523,15 @@ export default function AdminPOSPage() {
       returnedOrders,
       totalSales,
       totalMenuItems,
-      totalCategories: menuCategories.length,
+      totalCategories: (menuCategories || []).length,
     };
   }, [orders, menuCategories]);
 
   // ── Cantidad de pedidos activos (sin entregados si están ocultos) ─
   const activeOrdersCount = useMemo(() => {
-    return orders.filter((o) => {
+    const list = Array.isArray(orders) ? orders : [];
+    return list.filter((o) => {
+      if (!o) return false;
       if (o.status === 'entregado') {
         return !hideDelivered && isOrderFromToday(o);
       }
@@ -534,7 +541,9 @@ export default function AdminPOSPage() {
 
   // ── Filtrado de Pedidos ──────────────────────────────────────
   const filteredOrders = useMemo(() => {
-    return orders.filter((order) => {
+    const list = Array.isArray(orders) ? orders : [];
+    return list.filter((order) => {
+      if (!order) return false;
       let matchesFilter = false;
       if (orderFilter === 'all') {
         if (order.status === 'entregado') {
