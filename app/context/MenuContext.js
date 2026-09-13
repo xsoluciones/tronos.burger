@@ -1134,45 +1134,10 @@ export function MenuProvider({ children }) {
       } catch (e) {}
     }
 
-    let serverOk = false;
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 5000);
-      const res = await fetch('/api/menu', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'save_all',
-          menu_data: menuCategories,
-          config_data: restaurantConfig,
-        }),
-        signal: controller.signal,
-      });
-      clearTimeout(timeout);
-      if (res.ok) serverOk = true;
-    } catch (e) {}
-
-    try {
-      const controller2 = new AbortController();
-      const timeout2 = setTimeout(() => controller2.abort(), 5000);
-      await fetch('/api/orders', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'bulk_sync',
-          orders: cleanActiveOrders,
-          auditOrders: cleanAuditOrders,
-        }),
-        signal: controller2.signal,
-      });
-      clearTimeout(timeout2);
-    } catch (e) {}
-
     let supaOk = false;
     let supaError = null;
 
     try {
-      // Timeout estricto de 6 segundos para no congelar la interfaz si Supabase demora
       const supaPromise = supabase
         .from('app_state')
         .update({
@@ -1184,7 +1149,7 @@ export function MenuProvider({ children }) {
         .eq('id', 'tronos');
 
       const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Tiempo de espera agotado con Supabase (6s)')), 6000)
+        setTimeout(() => reject(new Error('Tiempo de espera agotado con Supabase (8s)')), 8000)
       );
 
       const res = await Promise.race([supaPromise, timeoutPromise]);
@@ -1192,9 +1157,35 @@ export function MenuProvider({ children }) {
         supaOk = true;
       } else {
         supaError = res.error?.message;
+        console.warn('[MenuContext] Error actualizando Supabase:', res.error);
       }
     } catch (err) {
       supaError = err?.message || 'Conexión lenta con Supabase';
+      console.warn('[MenuContext] Excepción actualizando Supabase:', err);
+    }
+
+    // Respaldo asíncrono en servidor local/Vercel (fire-and-forget sin bloquear al usuario)
+    let serverOk = false;
+    if (typeof window !== 'undefined') {
+      fetch('/api/menu', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'save_all',
+          menu_data: menuCategories,
+          config_data: restaurantConfig,
+        }),
+      }).then(r => { if (r.ok) serverOk = true; }).catch(() => {});
+
+      fetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'bulk_sync',
+          orders: cleanActiveOrders,
+          auditOrders: cleanAuditOrders,
+        }),
+      }).catch(() => {});
     }
 
     return {
