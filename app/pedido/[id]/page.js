@@ -70,28 +70,7 @@ export default function PedidoTrackingPage({ params }) {
         try { combined = [...combined, ...JSON.parse(rawAudit)]; } catch (e) {}
       }
 
-      // 3) Intentar traer de Supabase (si está configurado)
-      try {
-        const { data } = await supabase
-          .from('app_state')
-          .select('*')
-          .eq('id', 'tronos')
-          .single();
-
-        if (data) {
-          const remoteOrders = data.orders_data || data.config_data?.orders_data;
-          const remoteAudit = data.audit_orders_data || data.config_data?.audit_orders_data;
-
-          if (remoteOrders) {
-            const parsed = typeof remoteOrders === 'string' ? JSON.parse(remoteOrders) : remoteOrders;
-            if (Array.isArray(parsed)) combined = [...combined, ...parsed];
-          }
-          if (remoteAudit) {
-            const parsed = typeof remoteAudit === 'string' ? JSON.parse(remoteAudit) : remoteAudit;
-            if (Array.isArray(parsed)) combined = [...combined, ...parsed];
-          }
-        }
-      } catch (e) {}
+      // 3) Datos combinados y ordenados por fecha
 
       // Eliminar duplicados priorizando el estado más reciente
       const map = new Map();
@@ -147,8 +126,8 @@ export default function PedidoTrackingPage({ params }) {
       } catch (e) {}
     }
 
-    // Polling ligero cada 2 segundos para reflejar cambios de cocina y despacho al instante
-    const interval = setInterval(fetchOrderData, 2000);
+    // Polling ligero cada 10 segundos (BroadcastChannel ya maneja eventos inmediatos locales)
+    const interval = setInterval(fetchOrderData, 10000);
 
     return () => {
       window.removeEventListener('storage', handleStorage);

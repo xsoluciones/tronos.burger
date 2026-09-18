@@ -87,87 +87,36 @@ let purgedOrderIds = loadPurgedFromFile();
 /** @type {Set<ReadableStreamDefaultController>} Clientes SSE conectados */
 const sseClients = new Set();
 
-// ── Sincronización con Supabase (Servidor a Nube) ─────────────────────
-let isSyncingToSupabase = false;
-let pendingSupabaseSync = false;
+// ── Sincronización con Google Sheets (Servidor a Hoja de Cálculo) ─────
+const GOOGLE_SHEETS_URL = process.env.GOOGLE_SHEETS_WEBHOOK_URL || process.env.NEXT_PUBLIC_GOOGLE_SHEETS_WEBHOOK_URL;
 
-async function syncToSupabase() {
-  if (isSyncingToSupabase) {
-    pendingSupabaseSync = true;
-    return;
-  }
-  isSyncingToSupabase = true;
-  pendingSupabaseSync = false;
-
+async function syncOrderToGoogleSheets(order) {
+  if (!GOOGLE_SHEETS_URL || !order) return;
   try {
-    const supaClient = supabaseAdmin || supabase;
-    const supaPromise = supaClient
-      .from('app_state')
-      .update({
-        orders_data: orders,
-        audit_orders_data: auditOrders,
-      })
-      .eq('id', 'tronos');
-
-    const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Timeout syncToSupabase (4s)')), 4000)
-    );
-
-    await Promise.race([supaPromise, timeoutPromise]);
+    const res = await fetch(GOOGLE_SHEETS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ order }),
+    });
+    const data = await res.json();
+    console.log('[OrderStore] Sincronizado con Google Sheets:', data?.status || 'ok');
   } catch (e) {
-    console.warn('[OrderStore] Supabase sync error:', e?.message);
-  }
-
-  isSyncingToSupabase = false;
-  if (pendingSupabaseSync) {
-    setTimeout(syncToSupabase, 150);
+    console.warn('[OrderStore] Error sincronizando con Google Sheets:', e?.message);
   }
 }
 
-// Inicializar desde Supabase si hay datos en la nube más recientes
+// Inicializar desde disco de forma síncrona/inmediata
 let initPromise = null;
 export async function ensureInitialized() {
   if (!initPromise) {
-    initPromise = (async () => {
-      try {
-        const supaClient = supabaseAdmin || supabase;
-        const { data, error } = await supaClient
-          .from('app_state')
-          .select('orders_data, audit_orders_data')
-          .eq('id', 'tronos')
-          .single();
-
-        if (!error && data) {
-          let remoteOrders = data.orders_data;
-          if (typeof remoteOrders === 'string') {
-            try { remoteOrders = JSON.parse(remoteOrders); } catch (e) {}
-          }
-          let remoteAudit = data.audit_orders_data;
-          if (typeof remoteAudit === 'string') {
-            try { remoteAudit = JSON.parse(remoteAudit); } catch (e) {}
-          }
-
-          if (Array.isArray(remoteOrders) && remoteOrders.length > 0) {
-            await bulkSyncOrders(remoteOrders, Array.isArray(remoteAudit) ? remoteAudit : [], false);
-          }
-        }
-      } catch (e) {
-        // Continuar con los datos en memoria/archivo
-      }
-    })();
+    initPromise = Promise.resolve();
   }
   return initPromise;
 }
 
-// Disparar sincronización inicial en background al cargar el módulo
-ensureInitialized();
-
-async function persist(shouldSyncSupabase = true) {
+async function persist() {
   saveToFile(ORDERS_FILE, orders);
   saveToFile(AUDIT_FILE, auditOrders);
-  if (shouldSyncSupabase) {
-    await syncToSupabase();
-  }
 }
 
 function broadcast(eventType, payload) {
@@ -216,8 +165,9 @@ export async function addOrder(newOrder) {
   // 1) Broadcast SSE INMEDIATAMENTE (antes de Supabase) para que Admin/Cocina/Caja lo vean al instante
   broadcast('NEW_ORDER', orderWithMeta);
 
-  // 2) Persistir a disco + Supabase en background (no bloquea la respuesta HTTP)
+  // 2) Persistir a disco y enviar a Google Sheets en background (no bloquea la respuesta HTTP)
   persist().catch((e) => console.warn('[OrderStore] persist error:', e?.message));
+  syncOrderToGoogleSheets(orderWithMeta).catch((e) => console.warn('[OrderStore] Google Sheets error:', e?.message));
 
   return orderWithMeta;
 }

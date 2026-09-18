@@ -2,7 +2,8 @@
 
 import { createContext, useContext, useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { defaultMenuData } from '../data/menuData';
-import { supabase } from '../lib/supabaseClient';
+import { rtdb } from '../lib/firebaseClient';
+import { ref, onValue, set as fbSet } from 'firebase/database';
 
 const MenuContext = createContext(undefined);
 
@@ -402,9 +403,8 @@ export function MenuProvider({ children }) {
     );
   }, []);
 
-  // ── Sincronizar pedidos con Supabase y el Servidor (Acceso Multi-Computador) ──────
-  const saveOrdersToSupabase = useCallback(async (ordersList, auditList) => {
-    // Filtrar pedidos activos para asegurar que nunca se sincronicen anulados en la lista activa
+  // ── Sincronizar pedidos con Firebase y Servidor Local ──────
+  const syncOrdersToFirebase = useCallback(async (ordersList, auditList) => {
     const cleanActiveOrders = (ordersList || []).filter(
       (o) => o && o.status !== 'anulado_admin' && !deletedOrderIdsRef.current.has(o.id)
     );
@@ -412,7 +412,13 @@ export function MenuProvider({ children }) {
       (o) => o && !deletedOrderIdsRef.current.has(o.id)
     );
 
-    // 1) Enviar al servidor local (/api/orders) que sincroniza en disco y con Supabase server-side
+    // 1) Sincronizar en tiempo real con Firebase (0ms latencia)
+    try {
+      fbSet(ref(rtdb, 'orders'), cleanActiveOrders).catch(() => {});
+      fbSet(ref(rtdb, 'audit_orders'), cleanAuditOrders).catch(() => {});
+    } catch (e) {}
+
+    // 2) Enviar al servidor local (/api/orders) que sincroniza en disco
     if (typeof window !== 'undefined') {
       try {
         fetch('/api/orders', {
@@ -422,32 +428,9 @@ export function MenuProvider({ children }) {
         }).catch((e) => console.warn('[MenuContext] Sync diferido con /api/orders:', e));
       } catch (e) {}
     }
-
-    // 2) Sincronizar directo con Supabase con debounce (300ms) para evitar colisiones y latencia
-    if (saveSupabaseTimeoutRef.current) {
-      clearTimeout(saveSupabaseTimeoutRef.current);
-    }
-
-    saveSupabaseTimeoutRef.current = setTimeout(async () => {
-      try {
-        const supaPromise = supabase
-          .from('app_state')
-          .update({
-            orders_data: cleanActiveOrders,
-            audit_orders_data: cleanAuditOrders,
-          })
-          .eq('id', 'tronos');
-
-        const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Timeout Supabase Orders (5s)')), 5000)
-        );
-
-        await Promise.race([supaPromise, timeoutPromise]);
-      } catch (e) {
-        console.warn('[MenuContext] Error guardando pedidos en Supabase:', e?.message);
-      }
-    }, 300);
   }, []);
+
+  const saveOrdersToSupabase = syncOrdersToFirebase;
 
   const addOrder = useCallback((newOrder) => {
     if (!newOrder || !newOrder.id) return;
@@ -503,7 +486,16 @@ export function MenuProvider({ children }) {
       }).catch((err) => console.warn('[MenuContext] Error enviando a /api/orders:', err));
     }
 
-    // 3) BACKGROUND (fire-and-forget): Sincronizar con Supabase
+    // 3) BACKGROUND: Sincronizar directo con Google Sheets (garantiza guardado sin depender del servidor)
+    const sheetsUrl = process.env.NEXT_PUBLIC_GOOGLE_SHEETS_WEBHOOK_URL;
+    if (sheetsUrl && typeof window !== 'undefined') {
+      fetch(sheetsUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ order: orderWithMeta }),
+      }).catch((err) => console.warn('[MenuContext] Error enviando a Google Sheets:', err));
+    }
+
     saveOrdersToSupabase(nextOrders, nextAudit);
 
     return orderWithMeta;
@@ -775,121 +767,11 @@ export function MenuProvider({ children }) {
     }
   }, [saveOrdersToSupabase]);
 
-  // ── Cargar datos de Supabase después del montaje (solo cliente) ──
+  // ── Inicialización de estado y autenticación (100% local y ultra-rápido) ──
   useEffect(() => {
-    const loadFromSupabase = async () => {
-      try {
-        const { data, error } = await supabase
-          .from('app_state')
-          .select('*')
-          .eq('id', 'tronos')
-          .single();
+    setMenuLoaded(true);
 
-        if (error) {
-          console.error('Error fetching from Supabase:', error);
-          throw error;
-        }
-
-        if (data) {
-          // Parse menu data (protegido si hubo cambios locales recientes)
-          if (data.menu_data) {
-            const now = Date.now();
-            if (recentMenuUpdateRef.current > now) {
-              // Proteger cambios locales recientes para que el polling de Supabase no los revierta
-            } else {
-              let parsedMenu = data.menu_data;
-              if (typeof parsedMenu === 'string') parsedMenu = JSON.parse(parsedMenu);
-              if (Array.isArray(parsedMenu) && parsedMenu.length > 0) {
-                setMenuCategories((prev) => {
-                  if (JSON.stringify(prev) === JSON.stringify(parsedMenu)) return prev;
-                  return parsedMenu;
-                });
-                if (typeof window !== 'undefined') {
-                  try { localStorage.setItem(STORAGE_KEY_MENU, JSON.stringify(parsedMenu)); } catch (e) {}
-                }
-              }
-            }
-          }
-
-          // Parse config data (solo actualizar si los datos cambiaron)
-          if (data.config_data) {
-            let parsedConfig = data.config_data;
-            if (typeof parsedConfig === 'string') parsedConfig = JSON.parse(parsedConfig);
-            if (parsedConfig && typeof parsedConfig === 'object') {
-              setRestaurantConfig((prev) => {
-                const newConf = {
-                  ...prev,
-                  ...parsedConfig,
-                  whatsapp: cleanWhatsAppNumber(parsedConfig.whatsapp || prev.whatsapp),
-                  deliveryPrice: parsedConfig.deliveryPrice !== undefined ? Number(parsedConfig.deliveryPrice) : (prev.deliveryPrice || 4000),
-                };
-                if (JSON.stringify(prev) === JSON.stringify(newConf)) return prev;
-                return newConf;
-              });
-            }
-          }
-
-          // Parse active orders (Acceso multi-computador con Smart Merge)
-          const rawOrders = data.orders_data !== undefined ? data.orders_data : data.config_data?.orders_data;
-          if (rawOrders !== undefined && rawOrders !== null) {
-            const parsedOrders = typeof rawOrders === 'string' ? JSON.parse(rawOrders) : rawOrders;
-            if (Array.isArray(parsedOrders)) {
-              setOrders((prev) => {
-                const merged = smartMergeOrders(prev, parsedOrders);
-                if (merged === prev) return prev;
-                if (typeof window !== 'undefined') {
-                  try { localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(merged)); } catch (e) {}
-                }
-                return merged;
-              });
-            }
-          }
-
-          // Parse audit orders (Acceso multi-computador con Smart Merge)
-          const rawAudit = data.audit_orders_data !== undefined ? data.audit_orders_data : data.config_data?.audit_orders_data;
-          if (rawAudit !== undefined && rawAudit !== null) {
-            const parsedAudit = typeof rawAudit === 'string' ? JSON.parse(rawAudit) : rawAudit;
-            if (Array.isArray(parsedAudit)) {
-              setAuditOrders((prev) => {
-                const merged = smartMergeOrders(prev, parsedAudit, true);
-                if (merged === prev) return prev;
-                if (typeof window !== 'undefined') {
-                  try { localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(merged)); } catch (e) {}
-                }
-                return merged;
-              });
-            }
-          }
-        }
-      } catch (err) {
-        // Fallback manteniendo el menú local
-      } finally {
-        setMenuLoaded(true);
-      }
-    };
-
-    loadFromSupabase();
-
-    // Polling de respaldo cada 15 segundos (Realtime y SSE son los transportes instantáneos principales)
-    const pollInterval = setInterval(() => {
-      loadFromSupabase();
-    }, 15000);
-
-    let channel = null;
-    let realtimeDebounce = null;
-    try {
-      channel = supabase
-        .channel('app_state_realtime_orders')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'app_state', filter: 'id=eq.tronos' }, () => {
-          if (realtimeDebounce) clearTimeout(realtimeDebounce);
-          realtimeDebounce = setTimeout(() => {
-            loadFromSupabase();
-          }, 250);
-        })
-        .subscribe();
-    } catch (e) {}
-
-    // Load auth from localStorage since it's user-specific and shouldn't be in the DB
+    // Cargar autenticación desde localStorage
     try {
       const storedRole = localStorage.getItem(STORAGE_KEY_AUTH_ROLE);
       if (storedRole === 'admin' || storedRole === 'cajero') {
@@ -900,13 +782,50 @@ export function MenuProvider({ children }) {
     } catch {
       // Ignorar errores
     }
+  }, []);
+
+  // ── Sincronización en Tiempo Real con Firebase Realtime Database ────
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    let unsubOrders = null;
+    let unsubAudit = null;
+
+    try {
+      const ordersRef = ref(rtdb, 'orders');
+      unsubOrders = onValue(ordersRef, (snapshot) => {
+        const val = snapshot.val();
+        if (val && Array.isArray(val)) {
+          setOrders((prev) => {
+            const merged = smartMergeOrders(prev, val);
+            if (merged === prev) return prev;
+            try { localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(merged)); } catch (e) {}
+            return merged;
+          });
+        }
+      }, (err) => console.warn('[Firebase] Error escuchando pedidos:', err?.message));
+
+      const auditRef = ref(rtdb, 'audit_orders');
+      unsubAudit = onValue(auditRef, (snapshot) => {
+        const val = snapshot.val();
+        if (val && Array.isArray(val)) {
+          setAuditOrders((prev) => {
+            const merged = smartMergeOrders(prev, val, true);
+            if (merged === prev) return prev;
+            try { localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(merged)); } catch (e) {}
+            return merged;
+          });
+        }
+      }, (err) => console.warn('[Firebase] Error escuchando auditoría:', err?.message));
+    } catch (err) {
+      console.warn('[Firebase] Init error:', err);
+    }
 
     return () => {
-      clearInterval(pollInterval);
-      if (realtimeDebounce) clearTimeout(realtimeDebounce);
-      if (channel) supabase.removeChannel(channel);
+      if (unsubOrders) unsubOrders();
+      if (unsubAudit) unsubAudit();
     };
-  }, []);
+  }, [smartMergeOrders]);
 
   // ── Sincronización Multi-Dispositivo via API del Servidor + SSE ────
   useEffect(() => {
@@ -920,9 +839,10 @@ export function MenuProvider({ children }) {
     const initSync = async () => {
       try {
         // 1) Cargar lo que tenga el servidor
+        let data = null;
         const res = await fetch('/api/orders');
         if (res.ok) {
-          const data = await res.json();
+          data = await res.json();
           if (data.orders && Array.isArray(data.orders) && data.orders.length > 0) {
             setOrders((prev) => {
               const merged = smartMergeOrders(prev, data.orders);
@@ -1103,19 +1023,27 @@ export function MenuProvider({ children }) {
       }
     };
 
-    initSync();
-    connectSSE();
+    // Solo conectar SSE y polling en pantallas del restaurante (admin, caja, pedido)
+    const isPOS = typeof window !== 'undefined' && (
+      window.location.pathname.startsWith('/admin') ||
+      window.location.pathname.startsWith('/caja') ||
+      window.location.pathname.startsWith('/pedido')
+    );
 
-    // Polling periódico de respaldo al servidor cada 20 segundos (SSE es el canal principal en tiempo real)
-    const serverPollInterval = setInterval(() => {
-      if (isMounted) initSync();
-    }, 20000);
+    let serverPollInterval = null;
+    if (isPOS) {
+      initSync();
+      connectSSE();
+      serverPollInterval = setInterval(() => {
+        if (isMounted) initSync();
+      }, 20000);
+    }
 
     return () => {
       isMounted = false;
       if (eventSource) eventSource.close();
       if (reconnectTimeout) clearTimeout(reconnectTimeout);
-      clearInterval(serverPollInterval);
+      if (serverPollInterval) clearInterval(serverPollInterval);
     };
   }, []);
 
@@ -1305,15 +1233,10 @@ export function MenuProvider({ children }) {
     };
   }, [menuCategories, restaurantConfig, orders, auditOrders]);
 
-  // ── Sincronización explícita de config con Supabase (solo ante cambios manuales) ──
+  // ── Sincronización de config (solo ante cambios manuales del admin) ──
   const saveConfigToSupabase = useCallback(async (config) => {
-    try {
-      await supabase
-        .from('app_state')
-        .update({ config_data: config })
-        .eq('id', 'tronos');
-    } catch (error) {
-      console.warn('Error saving config to Supabase:', error);
+    if (typeof window !== 'undefined') {
+      try { localStorage.setItem(STORAGE_KEY_CONFIG, JSON.stringify(config)); } catch (e) {}
     }
   }, []);
 

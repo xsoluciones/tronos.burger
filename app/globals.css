@@ -43,6 +43,14 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Ocultar badge/indicador de desarrollo de Next.js */
+nextjs-portal,
+[data-nextjs-dev-tools-button],
+[data-nextjs-toast],
+div[data-nextjs-dialog-overlay] {
+  display: none !important;
+}
+
 /* ===== CUSTOM SCROLLBAR ===== */
 ::-webkit-scrollbar {
   width: 8px;

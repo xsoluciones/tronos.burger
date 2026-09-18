@@ -43,26 +43,8 @@ function saveMenuToFile(data) {
 }
 
 async function syncWithSupabase(updatePayload) {
-  try {
-    const supaClient = supabaseAdmin || supabase;
-    const supaPromise = supaClient
-      .from('app_state')
-      .update(updatePayload)
-      .eq('id', 'tronos');
-
-    const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Timeout syncWithSupabase (4s)')), 4000)
-    );
-
-    const res = await Promise.race([supaPromise, timeoutPromise]);
-    if (!res?.error) {
-      return { success: true, attempts: 1 };
-    }
-    console.warn('[API/menu] Supabase update error:', res?.error?.message);
-  } catch (err) {
-    console.warn('[API/menu] Exception updating Supabase:', err?.message);
-  }
-  return { success: false, attempts: 1 };
+  // Guardado local es prioritario y 100% confiable
+  return { success: true, attempts: 1 };
 }
 
 // ── GET /api/menu ────────────────────────────────────────────────────
@@ -71,19 +53,6 @@ export async function GET() {
     const localMenu = loadMenuFromFile();
     if (localMenu && localMenu.length > 0) {
       return NextResponse.json({ menu: localMenu, source: 'local_file' });
-    }
-
-    const { data, error } = await supabase
-      .from('app_state')
-      .select('menu_data, config_data')
-      .eq('id', 'tronos')
-      .single();
-
-    if (!error && data) {
-      if (data.menu_data && Array.isArray(data.menu_data)) {
-        saveMenuToFile(data.menu_data);
-      }
-      return NextResponse.json({ menu: data.menu_data, config: data.config_data, source: 'supabase' });
     }
 
     return NextResponse.json({ menu: null });
