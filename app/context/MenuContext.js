@@ -84,6 +84,20 @@ const defaultRestaurantConfig = {
  * Proveedor de contexto para el menú de Tronos Pub & Grill.
  * Gestiona las categorías, ítems, el carrito de compras y la autenticación.
  */
+const APP_CACHE_VERSION = 'tronos-v3.2.0';
+
+// Invalidar cachés locales obsoletas de versiones anteriores
+if (typeof window !== 'undefined') {
+  try {
+    const currentVersion = localStorage.getItem('tronos-cache-version');
+    if (currentVersion !== APP_CACHE_VERSION) {
+      localStorage.removeItem(STORAGE_KEY_MENU);
+      localStorage.removeItem(STORAGE_KEY_CONFIG);
+      localStorage.setItem('tronos-cache-version', APP_CACHE_VERSION);
+    }
+  } catch (e) {}
+}
+
 export function MenuProvider({ children }) {
   // ── Estado del menú (ahora un arreglo de categorías) ─────────────────
   const [menuCategories, setMenuCategories] = useState(() => {
@@ -732,6 +746,8 @@ export function MenuProvider({ children }) {
 
     let unsubOrders = null;
     let unsubAudit = null;
+    let unsubMenu = null;
+    let unsubConfig = null;
 
     try {
       const ordersRef = ref(rtdb, 'orders');
@@ -759,6 +775,31 @@ export function MenuProvider({ children }) {
           });
         }
       }, (err) => console.warn('[Firebase] Error escuchando auditoría:', err?.message));
+
+      // Sincronizar Carta / Menú en Vivo desde Firebase (garantiza que todos los clientes vean la última versión)
+      const menuRef = ref(rtdb, 'menu');
+      unsubMenu = onValue(menuRef, (snapshot) => {
+        const val = snapshot.val();
+        if (val && Array.isArray(val) && val.length > 0) {
+          if (Date.now() < recentMenuUpdateRef.current) return;
+          setMenuCategories(val);
+          try { localStorage.setItem(STORAGE_KEY_MENU, JSON.stringify(val)); } catch (e) {}
+        }
+      }, (err) => console.warn('[Firebase] Error escuchando menú:', err?.message));
+
+      // Sincronizar Configuración en Vivo desde Firebase
+      const configRef = ref(rtdb, 'config');
+      unsubConfig = onValue(configRef, (snapshot) => {
+        const val = snapshot.val();
+        if (val && typeof val === 'object') {
+          setRestaurantConfig((prev) => ({
+            ...prev,
+            ...val,
+            whatsapp: cleanWhatsAppNumber(val.whatsapp || prev.whatsapp),
+          }));
+          try { localStorage.setItem(STORAGE_KEY_CONFIG, JSON.stringify(val)); } catch (e) {}
+        }
+      }, (err) => console.warn('[Firebase] Error escuchando config:', err?.message));
     } catch (err) {
       console.warn('[Firebase] Init error:', err);
     }
@@ -766,6 +807,8 @@ export function MenuProvider({ children }) {
     return () => {
       if (unsubOrders) unsubOrders();
       if (unsubAudit) unsubAudit();
+      if (unsubMenu) unsubMenu();
+      if (unsubConfig) unsubConfig();
     };
   }, [smartMergeOrders]);
 
