@@ -419,6 +419,7 @@ export function MenuProvider({ children }) {
 
   }, []);
 
+  const saveOrdersToFirebase = syncOrdersToFirebase;
   const saveOrdersToSupabase = syncOrdersToFirebase;
 
   const addOrder = useCallback((newOrder) => {
@@ -477,10 +478,10 @@ export function MenuProvider({ children }) {
       }).catch((err) => console.warn('[MenuContext] Error enviando a Google Sheets:', err));
     }
 
-    saveOrdersToSupabase(nextOrders, nextAudit);
+    saveOrdersToFirebase(nextOrders, nextAudit);
 
     return orderWithMeta;
-  }, [orders, auditOrders, saveOrdersToSupabase]);
+  }, [orders, auditOrders, saveOrdersToFirebase]);
 
   const updateOrderStatus = useCallback((orderId, status, extraMeta = {}) => {
     const now = new Date().toISOString();
@@ -520,8 +521,8 @@ export function MenuProvider({ children }) {
 
     }
 
-    saveOrdersToSupabase(nextOrders, nextAudit);
-  }, [orders, auditOrders, saveOrdersToSupabase]);
+    saveOrdersToFirebase(nextOrders, nextAudit);
+  }, [orders, auditOrders, saveOrdersToFirebase]);
 
   const markOrderInvoiced = useCallback((orderId, invoiceDetails = {}) => {
     updateOrderStatus(orderId, undefined, {
@@ -598,10 +599,10 @@ export function MenuProvider({ children }) {
 
     }
 
-    saveOrdersToSupabase(nextOrders, nextAudit);
+    saveOrdersToFirebase(nextOrders, nextAudit);
 
     return updatedOrder;
-  }, [orders, auditOrders, saveOrdersToSupabase]);
+  }, [orders, auditOrders, saveOrdersToFirebase]);
 
   // Solo Administrador puede anular o eliminar
   const deleteOrder = useCallback((orderId, motivo = 'Anulado por Administrador') => {
@@ -643,9 +644,9 @@ export function MenuProvider({ children }) {
       }
     }
 
-    saveOrdersToSupabase(nextOrders, nextAudit);
+    saveOrdersToFirebase(nextOrders, nextAudit);
 
-  }, [orders, auditOrders, saveOrdersToSupabase, trackDeletedOrderId]);
+  }, [orders, auditOrders, saveOrdersToFirebase, trackDeletedOrderId]);
 
   // Purga física definitiva de auditoría (solo Admin)
   const purgeAuditOrder = useCallback((orderId) => {
@@ -677,9 +678,9 @@ export function MenuProvider({ children }) {
       }
     }
 
-    saveOrdersToSupabase(nextOrders, nextAudit);
+    saveOrdersToFirebase(nextOrders, nextAudit);
 
-  }, [orders, auditOrders, saveOrdersToSupabase, trackDeletedOrderId]);
+  }, [orders, auditOrders, saveOrdersToFirebase, trackDeletedOrderId]);
 
   // ── Limpiar y reiniciar todos los datos a cero (borrado completo) ──
   const resetAllOrdersData = useCallback(() => {
@@ -704,9 +705,9 @@ export function MenuProvider({ children }) {
         } catch (e) {}
       }
     }
-    saveOrdersToSupabase([], []);
+    saveOrdersToFirebase([], []);
 
-  }, [saveOrdersToSupabase]);
+  }, [saveOrdersToFirebase]);
 
   // ── Inicialización de estado y autenticación (100% local y ultra-rápido) ──
   useEffect(() => {
@@ -769,7 +770,7 @@ export function MenuProvider({ children }) {
   }, [smartMergeOrders]);
 
   // ── Sincronización de menú con Firebase ──
-  const saveMenuToSupabase = useCallback(async (categories) => {
+  const saveMenuToFirebase = useCallback(async (categories) => {
     if (!categories || !Array.isArray(categories)) return { success: false, error: 'Categorías inválidas' };
 
     recentMenuUpdateRef.current = Date.now() + 30000;
@@ -835,7 +836,7 @@ export function MenuProvider({ children }) {
   }, [menuCategories, restaurantConfig, orders, auditOrders]);
 
   // ── Sincronización de config (solo ante cambios manuales del admin) ──
-  const saveConfigToSupabase = useCallback(async (config) => {
+  const saveConfigToFirebase = useCallback(async (config) => {
     if (typeof window !== 'undefined') {
       try { localStorage.setItem(STORAGE_KEY_CONFIG, JSON.stringify(config)); } catch (e) {}
     }
@@ -997,8 +998,8 @@ export function MenuProvider({ children }) {
     if (typeof window !== 'undefined') {
       try { localStorage.setItem(STORAGE_KEY_MENU, JSON.stringify(nextCategories)); } catch (e) {}
     }
-    return await saveMenuToSupabase(nextCategories);
-  }, [menuCategories, saveMenuToSupabase]);
+    return await saveMenuToFirebase(nextCategories);
+  }, [menuCategories, saveMenuToFirebase]);
 
   // Eliminar un plato
   const deleteMenuItem = useCallback(async (categoryId, itemId) => {
@@ -1016,8 +1017,8 @@ export function MenuProvider({ children }) {
       try { localStorage.setItem(STORAGE_KEY_MENU, JSON.stringify(nextCategories)); } catch (e) {}
     }
     setCart((prev) => prev.filter((cartItem) => cartItem.id !== itemId));
-    return await saveMenuToSupabase(nextCategories);
-  }, [menuCategories, saveMenuToSupabase]);
+    return await saveMenuToFirebase(nextCategories);
+  }, [menuCategories, saveMenuToFirebase]);
 
   // Actualizar un plato
   const updateMenuItem = useCallback(async (categoryId, updatedItem) => {
@@ -1044,8 +1045,8 @@ export function MenuProvider({ children }) {
           : cartItem
       )
     );
-    return await saveMenuToSupabase(nextCategories);
-  }, [menuCategories, saveMenuToSupabase]);
+    return await saveMenuToFirebase(nextCategories);
+  }, [menuCategories, saveMenuToFirebase]);
 
   // Actualizar adicionales de un plato (Admin)
   const updateItemExtras = useCallback(async (categoryId, itemId, newExtras) => {
@@ -1065,8 +1066,8 @@ export function MenuProvider({ children }) {
     if (typeof window !== 'undefined') {
       try { localStorage.setItem(STORAGE_KEY_MENU, JSON.stringify(nextCategories)); } catch (e) {}
     }
-    return await saveMenuToSupabase(nextCategories);
-  }, [menuCategories, saveMenuToSupabase]);
+    return await saveMenuToFirebase(nextCategories);
+  }, [menuCategories, saveMenuToFirebase]);
 
   // Añadir nueva categoría
   const addCategory = useCallback(async (category) => {
@@ -1078,8 +1079,8 @@ export function MenuProvider({ children }) {
     if (typeof window !== 'undefined') {
       try { localStorage.setItem(STORAGE_KEY_MENU, JSON.stringify(nextCategories)); } catch (e) {}
     }
-    return await saveMenuToSupabase(nextCategories);
-  }, [menuCategories, saveMenuToSupabase]);
+    return await saveMenuToFirebase(nextCategories);
+  }, [menuCategories, saveMenuToFirebase]);
 
   // Eliminar categoría (y todos sus platos)
   const deleteCategory = useCallback(async (categoryId) => {
@@ -1092,8 +1093,8 @@ export function MenuProvider({ children }) {
       try { localStorage.setItem(STORAGE_KEY_MENU, JSON.stringify(nextCategories)); } catch (e) {}
     }
     setCart((prevCart) => prevCart.filter(item => item.categoryId !== categoryId));
-    return await saveMenuToSupabase(nextCategories);
-  }, [menuCategories, saveMenuToSupabase]);
+    return await saveMenuToFirebase(nextCategories);
+  }, [menuCategories, saveMenuToFirebase]);
 
   // ── Funciones de Configuración ─────────────────────────────────────────
   const updateWhatsApp = useCallback((phone) => {
@@ -1229,7 +1230,13 @@ export function MenuProvider({ children }) {
       resetAllOrdersData,
       posBackupFolderName,
       updatePosBackupFolderName,
-      saveMenuToSupabase,
+      saveMenuToFirebase,
+    saveMenuToSupabase: saveMenuToFirebase,
+    saveConfigToFirebase,
+    saveOrdersToFirebase,
+      saveMenuToSupabase: saveMenuToFirebase,
+      saveConfigToFirebase,
+      saveOrdersToFirebase,
       saveAllChanges,
     }),
     [
@@ -1273,7 +1280,7 @@ export function MenuProvider({ children }) {
       resetAllOrdersData,
       posBackupFolderName,
       updatePosBackupFolderName,
-      saveMenuToSupabase,
+      saveMenuToFirebase,
       saveAllChanges,
     ]
   );

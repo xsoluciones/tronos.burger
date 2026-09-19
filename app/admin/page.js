@@ -85,7 +85,7 @@ export default function AdminPOSPage() {
     resetAllOrdersData,
     posBackupFolderName,
     updatePosBackupFolderName,
-    saveMenuToSupabase,
+    saveMenuToFirebase, saveMenuToSupabase,
     saveAllChanges,
   } = useMenu();
 
