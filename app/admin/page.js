@@ -89,16 +89,16 @@ export default function AdminPOSPage() {
     saveAllChanges,
   } = useMenu();
 
-  // ── Estado de Guardado Manual de Seguridad (Supabase + Local) ─────
+  // ── Estado de Guardado Manual de Seguridad (Firebase + Local) ─────
   const [isSavingSafety, setIsSavingSafety] = useState(false);
 
   const handleSaveAllSafety = async () => {
     setIsSavingSafety(true);
-    showToast('Sincronizando menú y configuración con Supabase...', 'info');
+    showToast('Sincronizando menú y configuración con Firebase...', 'info');
     try {
       const res = await saveAllChanges();
       if (res?.supaOk) {
-        showToast('✓ ¡Cambios guardados con éxito en Supabase y Respaldo local!', 'success');
+        showToast('✓ ¡Cambios guardados con éxito en Firebase y Respaldo local!', 'success');
       } else if (res?.serverOk || res?.success) {
         showToast('✓ ¡Cambios guardados y respaldados con éxito!', 'success');
       } else {
@@ -1943,7 +1943,7 @@ export default function AdminPOSPage() {
       categoryId,
       extras: [],
     });
-    showToast(`"${newItem.name}" añadido exitosamente y guardado en Supabase.`);
+    showToast(`"${newItem.name}" añadido exitosamente y guardado en Firebase.`);
     setNewItem({ name: '', description: '', detailedDescription: '', price: '', image: '' });
     setAddingToCategoryId(null);
   };
@@ -2770,7 +2770,7 @@ export default function AdminPOSPage() {
                 cursor: isSavingSafety ? 'wait' : 'pointer',
                 opacity: isSavingSafety ? 0.75 : 1,
               }}
-              title="Guardar todos los cambios del menú y configuración en Supabase y respaldo en PC"
+              title="Guardar todos los cambios del menú y configuración en Firebase y respaldo en PC"
             >
               {isSavingSafety ? (
                 <>
@@ -4416,7 +4416,7 @@ export default function AdminPOSPage() {
                                 if (confirm(`¿Eliminar comanda #${order.id}?`)) {
                                   try {
                                     await deleteOrder(order.id);
-                                    showToast(`✓ Comanda #${order.id} eliminada y sincronizada en Supabase.`);
+                                    showToast(`✓ Comanda #${order.id} eliminada y sincronizada en Firebase.`);
                                   } catch (e) {
                                     showToast(`Comanda #${order.id} eliminada localmente.`);
                                   }
@@ -4630,7 +4630,7 @@ export default function AdminPOSPage() {
                                     try {
                                       await deleteOrder(order.id);
                                       await purgeAuditOrder(order.id);
-                                      showToast(`✓ Comanda #${order.id} purgada y actualizada en Supabase.`);
+                                      showToast(`✓ Comanda #${order.id} purgada y actualizada en Firebase.`);
                                     } catch (e) {
                                       showToast(`Comanda #${order.id} purgada localmente.`);
                                     }
@@ -5065,7 +5065,7 @@ export default function AdminPOSPage() {
                     cursor: isSavingSafety ? 'wait' : 'pointer',
                     opacity: isSavingSafety ? 0.75 : 1,
                   }}
-                  title="Guardar todos los cambios del menú en Supabase y respaldo local"
+                  title="Guardar todos los cambios del menú en Firebase y respaldo local"
                 >
                   {isSavingSafety ? (
                     <>
@@ -5150,14 +5150,14 @@ export default function AdminPOSPage() {
                       <button
                         onClick={async () => {
                           if (confirm(`¿Eliminar la categoría "${category.title}"?`)) {
-                            showToast('Eliminando categoría y sincronizando con Supabase...', 'info');
+                            showToast('Eliminando categoría y sincronizando con Firebase...', 'info');
                             const res = await deleteCategory(category.id);
                             if (res?.supaOk) {
-                              showToast('✓ Categoría eliminada y guardada en Supabase.', 'success');
+                              showToast('✓ Categoría eliminada y guardada en Firebase.', 'success');
                             } else if (res?.serverOk) {
                               showToast('✓ Categoría eliminada (guardada localmente, sincronizando en segundo plano).', 'success');
                             } else {
-                              showToast('⚠️ Eliminada localmente. Pulsa "Guardar Cambios" para asegurar en Supabase.', 'error');
+                              showToast('⚠️ Eliminada localmente. Pulsa "Guardar Cambios" para asegurar en Firebase.', 'error');
                             }
                           }
                         }}
@@ -5436,14 +5436,14 @@ export default function AdminPOSPage() {
                                     <button
                                       onClick={async () => {
                                         if (confirm(`¿Eliminar "${item.name}"?`)) {
-                                          showToast('Eliminando plato y sincronizando con Supabase...', 'info');
+                                          showToast('Eliminando plato y sincronizando con Firebase...', 'info');
                                           const res = await deleteMenuItem(category.id, item.id);
                                           if (res?.supaOk) {
-                                            showToast('✓ Plato eliminado y actualizado en Supabase.', 'success');
+                                            showToast('✓ Plato eliminado y actualizado en Firebase.', 'success');
                                           } else if (res?.serverOk) {
                                             showToast('✓ Plato eliminado (guardado localmente, sincronizando en segundo plano).', 'success');
                                           } else {
-                                            showToast('⚠️ Eliminado localmente. Pulsa "Guardar Cambios" para asegurar en Supabase.', 'error');
+                                            showToast('⚠️ Eliminado localmente. Pulsa "Guardar Cambios" para asegurar en Firebase.', 'error');
                                           }
                                         }
                                       }}
@@ -5631,7 +5631,7 @@ export default function AdminPOSPage() {
                   </a>
                 </div>
 
-                {/* ── PRECIO DEL DOMICILIO (CONFIGURACIÓN EN LÍNEA SUPABASE) ── */}
+                {/* ── PRECIO DEL DOMICILIO (CONFIGURACIÓN EN LÍNEA FIREBASE) ── */}
                 <div className="w-100 p-3 mb-4 rounded-3 border text-start" style={{ background: 'var(--bg-sub)', borderColor: 'var(--border-main)' }}>
                   <div className="d-flex align-items-center justify-content-between mb-2">
                     <span style={{ fontSize: '12.5px', fontWeight: 800, color: 'var(--text-main)' }}>
@@ -5642,7 +5642,7 @@ export default function AdminPOSPage() {
                     </span>
                   </div>
                   <p style={{ color: 'var(--text-muted)', fontSize: '11.5px', marginBottom: '8px' }}>
-                    Este es el recargo que se suma automáticamente al pedido cuando el cliente selecciona <em>"Quiero que me lo traigan a mi casa"</em>. Se guarda directamente en Supabase y se actualiza al instante en la carta web.
+                    Este es el recargo que se suma automáticamente al pedido cuando el cliente selecciona <em>"Quiero que me lo traigan a mi casa"</em>. Se guarda directamente en Firebase y se actualiza al instante en la carta web.
                   </p>
                   <div className="d-flex gap-2">
                     <input
@@ -5670,7 +5670,7 @@ export default function AdminPOSPage() {
                         }
                         const saved = updateDeliveryPrice(val);
                         setDeliveryPriceInput(String(saved));
-                        showToast(`✅ Tarifa de domicilio guardada en Supabase: ${formatPrice(saved)}`, 'success');
+                        showToast(`✅ Tarifa de domicilio guardada en Firebase: ${formatPrice(saved)}`, 'success');
                       }}
                       className="btn btn-sm text-nowrap fw-bold"
                       style={{

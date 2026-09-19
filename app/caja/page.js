@@ -2562,7 +2562,7 @@ export default function CajaPage() {
                         <span>🔒 Auditoría Central</span>
                         <button
                           onClick={() => {
-                            if (confirm(`¿Estás seguro de eliminar la comanda #${order.id}? Se borrará inmediatamente del panel y de Supabase.`)) {
+                            if (confirm(`¿Estás seguro de eliminar la comanda #${order.id}? Se borrará inmediatamente del panel y de Firebase.`)) {
                               deleteOrder(order.id, 'Anulado desde Caja');
                               showToast(`Comanda #${order.id} eliminada permanentemente.`);
                             }

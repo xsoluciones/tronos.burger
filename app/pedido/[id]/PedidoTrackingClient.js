@@ -5,8 +5,8 @@ import { useParams } from 'next/navigation';
 import Image from 'next/image';
 import Link from 'next/link';
 import { formatPrice } from '@/app/data/menuData';
-
-import { supabase } from '@/app/lib/supabaseClient';
+import { rtdb } from '@/app/lib/firebaseClient';
+import { ref, onValue } from 'firebase/database';
 
 // Clave de almacenamiento exclusiva para opiniones de clientes
 export const STORAGE_KEY_CUSTOMER_FEEDBACK = 'tronos_customer_feedback';
@@ -50,21 +50,6 @@ export default function PedidoTrackingClient() {
     try {
       let combined = [];
 
-      // 1) Intentar cargar desde el servidor (funciona desde cualquier dispositivo/red)
-      try {
-        const res = await fetch('/api/orders');
-        if (res.ok) {
-          const data = await res.json();
-          if (data.orders && Array.isArray(data.orders)) {
-            combined = [...combined, ...data.orders];
-          }
-          if (data.auditOrders && Array.isArray(data.auditOrders)) {
-            combined = [...combined, ...data.auditOrders];
-          }
-        }
-      } catch (e) {
-        // Servidor no disponible, continuar con localStorage
-      }
 
       // 2) Fallback: cargar desde localStorage (solo funciona en el mismo dispositivo)
       const rawOrders = localStorage.getItem('tronos-orders');
@@ -105,6 +90,30 @@ export default function PedidoTrackingClient() {
   useEffect(() => {
     fetchOrderData();
 
+    // Listen to Firebase for real-time order updates (replaces polling)
+    const ordersRef = ref(rtdb, 'orders');
+    const auditRef = ref(rtdb, 'audit_orders');
+    const unsubOrders = onValue(ordersRef, (snapshot) => {
+      const val = snapshot.val();
+      if (val && Array.isArray(val)) {
+        setOrders(prev => {
+          const combined = [...prev];
+          val.forEach(o => { if (o && !combined.some(c => c.id === o.id)) combined.push(o); });
+          return combined;
+        });
+      }
+    }, () => {});
+    const unsubAudit = onValue(auditRef, (snapshot) => {
+      const val = snapshot.val();
+      if (val && Array.isArray(val)) {
+        setOrders(prev => {
+          const combined = [...prev];
+          val.forEach(o => { if (o && !combined.some(c => c.id === o.id)) combined.push(o); });
+          return combined;
+        });
+      }
+    }, () => {});
+
     // Sincronización por storage event (otra pestaña del mismo navegador)
     const handleStorage = (e) => {
       if (e.key === 'tronos-orders' || e.key === 'tronos-audit-backup') {
@@ -133,13 +142,11 @@ export default function PedidoTrackingClient() {
       } catch (e) {}
     }
 
-    // Polling ligero cada 10 segundos (BroadcastChannel ya maneja eventos inmediatos locales)
-    const interval = setInterval(fetchOrderData, 10000);
-
     return () => {
       window.removeEventListener('storage', handleStorage);
       if (channel) channel.close();
-      clearInterval(interval);
+      if (unsubOrders) unsubOrders();
+      if (unsubAudit) unsubAudit();
     };
   }, [orderId]);
 
