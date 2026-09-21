@@ -21,6 +21,11 @@ export const metadata = {
 export default function RootLayout({ children }) {
   return (
     <html lang="es" suppressHydrationWarning>
+      <head>
+        <meta httpEquiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+        <meta httpEquiv="Pragma" content="no-cache" />
+        <meta httpEquiv="Expires" content="0" />
+      </head>
       <body suppressHydrationWarning>
         <MenuProvider>
           {children}

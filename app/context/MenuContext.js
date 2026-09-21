@@ -84,16 +84,38 @@ const defaultRestaurantConfig = {
  * Proveedor de contexto para el menú de Tronos Pub & Grill.
  * Gestiona las categorías, ítems, el carrito de compras y la autenticación.
  */
-const APP_CACHE_VERSION = 'tronos-v3.2.0';
+const APP_CACHE_VERSION = 'tronos-v4.0.0';
 
-// Invalidar cachés locales obsoletas de versiones anteriores
+// TTL para cachés locales: 2 horas (en milisegundos)
+// Después de este tiempo, los datos cacheados se descartan y se espera a Firebase
+const CACHE_TTL_MS = 2 * 60 * 60 * 1000;
+
+/** Comprueba si el caché local ha expirado */
+const isCacheExpired = () => {
+  if (typeof window === 'undefined') return true;
+  try {
+    const ts = localStorage.getItem('tronos-cache-ts');
+    if (!ts) return true;
+    return (Date.now() - Number(ts)) > CACHE_TTL_MS;
+  } catch (e) { return true; }
+};
+
+/** Actualiza el timestamp del caché local */
+const touchCacheTimestamp = () => {
+  if (typeof window === 'undefined') return;
+  try { localStorage.setItem('tronos-cache-ts', String(Date.now())); } catch (e) {}
+};
+
+// Invalidar cachés locales obsoletas de versiones anteriores O si el TTL expiró
 if (typeof window !== 'undefined') {
   try {
     const currentVersion = localStorage.getItem('tronos-cache-version');
-    if (currentVersion !== APP_CACHE_VERSION) {
+    const expired = isCacheExpired();
+    if (currentVersion !== APP_CACHE_VERSION || expired) {
       localStorage.removeItem(STORAGE_KEY_MENU);
       localStorage.removeItem(STORAGE_KEY_CONFIG);
       localStorage.setItem('tronos-cache-version', APP_CACHE_VERSION);
+      touchCacheTimestamp();
     }
   } catch (e) {}
 }
@@ -784,6 +806,7 @@ export function MenuProvider({ children }) {
           if (Date.now() < recentMenuUpdateRef.current) return;
           setMenuCategories(val);
           try { localStorage.setItem(STORAGE_KEY_MENU, JSON.stringify(val)); } catch (e) {}
+          touchCacheTimestamp();
         }
       }, (err) => console.warn('[Firebase] Error escuchando menú:', err?.message));
 
@@ -798,6 +821,7 @@ export function MenuProvider({ children }) {
             whatsapp: cleanWhatsAppNumber(val.whatsapp || prev.whatsapp),
           }));
           try { localStorage.setItem(STORAGE_KEY_CONFIG, JSON.stringify(val)); } catch (e) {}
+          touchCacheTimestamp();
         }
       }, (err) => console.warn('[Firebase] Error escuchando config:', err?.message));
     } catch (err) {
