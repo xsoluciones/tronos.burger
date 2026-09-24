@@ -50,7 +50,7 @@ export default function OrderForm({ onClose }) {
     setOrderIdCreated(orderId);
 
     const origin = typeof window !== 'undefined' ? window.location.origin : 'https://tronospub.com';
-    const trackingUrl = `${origin}/pedido/${orderId}`;
+    const trackingUrl = `${origin}/pedido/tracking?id=${orderId}`;
 
     const currentDeliveryPrice = restaurantConfig?.deliveryPrice !== undefined ? Number(restaurantConfig.deliveryPrice) : 4000;
     const deliveryFee = orderType === 'domicilio' ? currentDeliveryPrice : 0;
@@ -153,7 +153,7 @@ export default function OrderForm({ onClose }) {
               {/* Botón con la manita indicando tocar para ver seguimiento */}
               <div style={{ marginTop: '18px', marginBottom: '14px' }}>
                 <a
-                  href={`/pedido/${orderIdCreated}`}
+                  href={`/pedido/tracking?id=${orderIdCreated}`}
                   style={{
                     display: 'inline-flex',
                     alignItems: 'center',

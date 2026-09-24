@@ -6079,7 +6079,7 @@ export default function AdminPOSPage() {
                             <div className="d-flex align-items-center gap-2">
                               {fb.orderId && (
                                 <Link
-                                  href={`/pedido/${fb.orderId}`}
+                                  href={`/pedido/tracking?id=${fb.orderId}`}
                                   target="_blank"
                                   className="badge text-decoration-none"
                                   style={{

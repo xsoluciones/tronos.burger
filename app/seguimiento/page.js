@@ -11,7 +11,7 @@ function SeguimientoContent() {
 
   useEffect(() => {
     if (id) {
-      router.replace(`/pedido/${id}`);
+      router.replace(`/pedido/tracking?id=${id}`);
     }
   }, [id, router]);
 

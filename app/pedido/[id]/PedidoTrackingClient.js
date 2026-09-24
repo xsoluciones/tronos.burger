@@ -15,10 +15,18 @@ export default function PedidoTrackingClient() {
   const params = useParams();
   let orderId = params?.id ? decodeURIComponent(params.id) : '';
   if ((!orderId || orderId === 'tracking') && typeof window !== 'undefined') {
-    const parts = window.location.pathname.split('/');
-    const last = parts[parts.length - 1] || parts[parts.length - 2];
-    if (last && last !== 'pedido' && last !== 'tracking') {
-      orderId = decodeURIComponent(last);
+    // Try query parameter first (?id=XXX)
+    const urlParams = new URLSearchParams(window.location.search);
+    const qId = urlParams.get('id');
+    if (qId && qId !== 'tracking') {
+      orderId = decodeURIComponent(qId);
+    } else {
+      // Fallback: try to extract from URL path
+      const parts = window.location.pathname.split('/');
+      const last = parts[parts.length - 1] || parts[parts.length - 2];
+      if (last && last !== 'pedido' && last !== 'tracking') {
+        orderId = decodeURIComponent(last);
+      }
     }
   }
 
