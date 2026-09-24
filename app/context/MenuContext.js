@@ -7,6 +7,14 @@ import { ref, onValue, set as fbSet } from 'firebase/database';
 
 const MenuContext = createContext(undefined);
 
+// Helper: Firebase puede devolver arrays u objetos — normalizar siempre a array limpio
+const firebaseValToArray = (val) => {
+  if (!val) return [];
+  if (Array.isArray(val)) return val.filter(Boolean);
+  if (typeof val === 'object') return Object.values(val).filter(Boolean);
+  return [];
+};
+
 const STORAGE_KEY_MENU = 'tronos-menu';
 const STORAGE_KEY_AUTH = 'tronos-admin-auth';
 const STORAGE_KEY_AUTH_ROLE = 'tronos-auth-role';
@@ -360,8 +368,9 @@ export function MenuProvider({ children }) {
   }, []);
 
   // Smart merge que respeta la versión más reciente por updatedAt y respeta el guard de actualización local
-  const smartMergeOrders = useCallback((currentList, incomingList, isAudit = false) => {
-    if (!Array.isArray(incomingList)) return currentList;
+  const smartMergeOrders = useCallback((currentList, incomingRaw, isAudit = false) => {
+    const incomingList = firebaseValToArray(incomingRaw);
+    if (incomingList.length === 0) return currentList;
     if (!Array.isArray(currentList) || currentList.length === 0) {
       if (isAudit) return incomingList.filter(o => !deletedOrderIdsRef.current.has(o?.id));
       return incomingList.filter(o => o && o.status !== 'anulado_admin' && !deletedOrderIdsRef.current.has(o.id));
@@ -775,9 +784,10 @@ export function MenuProvider({ children }) {
       const ordersRef = ref(rtdb, 'orders');
       unsubOrders = onValue(ordersRef, (snapshot) => {
         const val = snapshot.val();
-        if (val && Array.isArray(val)) {
+        const items = firebaseValToArray(val);
+        if (items.length > 0) {
           setOrders((prev) => {
-            const merged = smartMergeOrders(prev, val);
+            const merged = smartMergeOrders(prev, items);
             if (merged === prev) return prev;
             try { localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(merged)); } catch (e) {}
             return merged;
@@ -788,9 +798,10 @@ export function MenuProvider({ children }) {
       const auditRef = ref(rtdb, 'audit_orders');
       unsubAudit = onValue(auditRef, (snapshot) => {
         const val = snapshot.val();
-        if (val && Array.isArray(val)) {
+        const items = firebaseValToArray(val);
+        if (items.length > 0) {
           setAuditOrders((prev) => {
-            const merged = smartMergeOrders(prev, val, true);
+            const merged = smartMergeOrders(prev, items, true);
             if (merged === prev) return prev;
             try { localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(merged)); } catch (e) {}
             return merged;
