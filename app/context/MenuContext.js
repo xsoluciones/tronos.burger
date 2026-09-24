@@ -467,7 +467,7 @@ export function MenuProvider({ children }) {
   const saveOrdersToFirebase = syncOrdersToFirebase;
   const saveOrdersToSupabase = syncOrdersToFirebase;
 
-  const addOrder = useCallback((newOrder) => {
+  const addOrder = useCallback(async (newOrder) => {
     if (!newOrder || !newOrder.id) return;
 
     // Evitar procesar pedidos duplicados si ya existen con el mismo ID
@@ -512,6 +512,21 @@ export function MenuProvider({ children }) {
       }
     }
 
+    // 2) PRIORIDAD CRÍTICA (0ms latencia): Enviar directamente este pedido específico a Firebase
+    // Viaja como un paquete ultraligero (<1KB) y se confirma antes de que el celular cambie a WhatsApp
+    try {
+      const cleanId = String(orderWithMeta.id).replace(/[^a-zA-Z0-9_-]/g, '_');
+      const pDirectOrder = fbSet(ref(rtdb, `orders/${cleanId}`), orderWithMeta);
+      const pDirectAudit = fbSet(ref(rtdb, `audit_orders/${cleanId}`), orderWithMeta);
+
+      // Esperar max 350ms para asegurar el envío por el socket antes de que WhatsApp congele la pestaña
+      await Promise.race([
+        Promise.allSettled([pDirectOrder, pDirectAudit]),
+        new Promise((resolve) => setTimeout(resolve, 350)),
+      ]);
+    } catch (e) {
+      console.warn('[Firebase] Error en envío prioritario de orden:', e);
+    }
 
     // 3) BACKGROUND: Sincronizar directo con Google Sheets (garantiza guardado sin depender del servidor)
     const sheetsUrl = process.env.NEXT_PUBLIC_GOOGLE_SHEETS_WEBHOOK_URL;
@@ -523,6 +538,7 @@ export function MenuProvider({ children }) {
       }).catch((err) => console.warn('[MenuContext] Error enviando a Google Sheets:', err));
     }
 
+    // Respaldo de listas completas en Firebase
     saveOrdersToFirebase(nextOrders, nextAudit);
 
     return orderWithMeta;
