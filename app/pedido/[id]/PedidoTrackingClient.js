@@ -52,12 +52,19 @@ export default function PedidoTrackingClient() {
     } catch (e) {}
   }, []);
 
+  // ── Helper: convert Firebase value (array or object) to clean array ──
+  const firebaseValToArray = (val) => {
+    if (!val) return [];
+    if (Array.isArray(val)) return val.filter(Boolean);
+    if (typeof val === 'object') return Object.values(val).filter(Boolean);
+    return [];
+  };
+
   // ── Cargar Pedidos y Mantener Sincronización en Vivo ───────────────
   const fetchOrderData = async () => {
     if (typeof window === 'undefined') return;
     try {
       let combined = [];
-
 
       // 2) Fallback: cargar desde localStorage (solo funciona en el mismo dispositivo)
       const rawOrders = localStorage.getItem('tronos-orders');
@@ -90,8 +97,6 @@ export default function PedidoTrackingClient() {
       }
     } catch (err) {
       console.error('Error cargando orden:', err);
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -101,26 +106,48 @@ export default function PedidoTrackingClient() {
     // Listen to Firebase for real-time order updates (replaces polling)
     const ordersRef = ref(rtdb, 'orders');
     const auditRef = ref(rtdb, 'audit_orders');
-    const unsubOrders = onValue(ordersRef, (snapshot) => {
+    let firebaseLoaded = 0;
+
+    const handleFirebaseData = (snapshot) => {
       const val = snapshot.val();
-      if (val && Array.isArray(val)) {
+      const items = firebaseValToArray(val);
+      if (items.length > 0) {
         setOrders(prev => {
-          const combined = [...prev];
-          val.forEach(o => { if (o && !combined.some(c => c.id === o.id)) combined.push(o); });
-          return combined;
+          const map = new Map();
+          // Add existing orders
+          (prev || []).forEach(o => { if (o?.id) map.set(o.id, o); });
+          // Add/update with Firebase data (Firebase has latest state)
+          items.forEach(o => { if (o?.id) map.set(o.id, o); });
+          const merged = Array.from(map.values());
+
+          // Update liveOrder if we find a match
+          if (orderId) {
+            const found = merged.find(o => o.id?.toLowerCase() === orderId.toLowerCase());
+            if (found) {
+              setLiveOrder(found);
+            }
+          }
+
+          return merged;
         });
       }
-    }, () => {});
-    const unsubAudit = onValue(auditRef, (snapshot) => {
-      const val = snapshot.val();
-      if (val && Array.isArray(val)) {
-        setOrders(prev => {
-          const combined = [...prev];
-          val.forEach(o => { if (o && !combined.some(c => c.id === o.id)) combined.push(o); });
-          return combined;
-        });
+      firebaseLoaded++;
+      if (firebaseLoaded >= 2) {
+        setLoading(false);
       }
-    }, () => {});
+    };
+
+    const unsubOrders = onValue(ordersRef, handleFirebaseData, () => {
+      firebaseLoaded++;
+      if (firebaseLoaded >= 2) setLoading(false);
+    });
+    const unsubAudit = onValue(auditRef, handleFirebaseData, () => {
+      firebaseLoaded++;
+      if (firebaseLoaded >= 2) setLoading(false);
+    });
+
+    // Safety timeout: stop loading after 5 seconds even if Firebase is slow
+    const loadingTimeout = setTimeout(() => setLoading(false), 5000);
 
     // Sincronización por storage event (otra pestaña del mismo navegador)
     const handleStorage = (e) => {
@@ -151,6 +178,7 @@ export default function PedidoTrackingClient() {
     }
 
     return () => {
+      clearTimeout(loadingTimeout);
       window.removeEventListener('storage', handleStorage);
       if (channel) channel.close();
       if (unsubOrders) unsubOrders();
