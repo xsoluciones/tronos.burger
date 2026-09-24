@@ -3,7 +3,7 @@
 import { createContext, useContext, useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { defaultMenuData } from '../data/menuData';
 import { rtdb } from '../lib/firebaseClient';
-import { ref, onValue, set as fbSet } from 'firebase/database';
+import { ref, onValue, set as fbSet, remove as fbRemove } from 'firebase/database';
 
 const MenuContext = createContext(undefined);
 
@@ -13,6 +13,28 @@ const firebaseValToArray = (val) => {
   if (Array.isArray(val)) return val.filter(Boolean);
   if (typeof val === 'object') return Object.values(val).filter(Boolean);
   return [];
+};
+
+// Helper: Guardado seguro en localStorage blindado contra QuotaExceededError (límite de 5MB)
+// Permite que la app funcione fluidamente a lo largo de los años sin bloquearse por acumulación de datos
+const safeSetLocalStorage = (key, val, maxItems = null) => {
+  if (typeof window === 'undefined') return;
+  try {
+    let payload = val;
+    if (maxItems && Array.isArray(val)) {
+      payload = val.slice(0, maxItems);
+    }
+    localStorage.setItem(key, JSON.stringify(payload));
+  } catch (err) {
+    try {
+      if (Array.isArray(val)) {
+        // Reducir a los 100 más recientes para liberar cuota de disco sin romper la sesión
+        localStorage.setItem(key, JSON.stringify(val.slice(0, 100)));
+      }
+    } catch (e) {
+      console.warn(`[MenuContext] No se pudo guardar ${key} en localStorage:`, e);
+    }
+  }
 };
 
 const STORAGE_KEY_MENU = 'tronos-menu';
@@ -114,16 +136,12 @@ const touchCacheTimestamp = () => {
   try { localStorage.setItem('tronos-cache-ts', String(Date.now())); } catch (e) {}
 };
 
-// Invalidar cachés locales obsoletas de versiones anteriores O si el TTL expiró
+// Preservar la versión de caché de la app (sin borrar el menú cada 2 horas para garantizar que clientes con mala señal siempre vean la carta)
 if (typeof window !== 'undefined') {
   try {
     const currentVersion = localStorage.getItem('tronos-cache-version');
-    const expired = isCacheExpired();
-    if (currentVersion !== APP_CACHE_VERSION || expired) {
-      localStorage.removeItem(STORAGE_KEY_MENU);
-      localStorage.removeItem(STORAGE_KEY_CONFIG);
+    if (currentVersion !== APP_CACHE_VERSION) {
       localStorage.setItem('tronos-cache-version', APP_CACHE_VERSION);
-      touchCacheTimestamp();
     }
   } catch (e) {}
 }
@@ -217,22 +235,14 @@ export function MenuProvider({ children }) {
     return [];
   });
 
-  // Guardar pedidos activos en localStorage
+  // Guardar pedidos activos en localStorage (blindado contra cuota)
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(orders));
-      } catch (e) {}
-    }
+    safeSetLocalStorage(STORAGE_KEY_ORDERS, orders);
   }, [orders]);
 
-  // Guardar pedidos de auditoría en localStorage
+  // Guardar pedidos de auditoría en localStorage (conservando los 500 más recientes localmente para 0 lag y máximo rendimiento)
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(auditOrders));
-      } catch (e) {}
-    }
+    safeSetLocalStorage(STORAGE_KEY_AUDIT_ORDERS, auditOrders, 500);
   }, [auditOrders]);
 
   // ── Sincronización en Tiempo Real entre Pestañas ────────────────────
@@ -567,10 +577,8 @@ export function MenuProvider({ children }) {
     setAuditOrders(nextAudit);
 
     if (typeof window !== 'undefined') {
-      try {
-        localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(nextOrders));
-        localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(nextAudit));
-      } catch (e) {}
+      safeSetLocalStorage(STORAGE_KEY_ORDERS, nextOrders);
+      safeSetLocalStorage(STORAGE_KEY_AUDIT_ORDERS, nextAudit, 500);
 
       if ('BroadcastChannel' in window) {
         try {
@@ -579,8 +587,17 @@ export function MenuProvider({ children }) {
           channel.close();
         } catch (e) {}
       }
-
     }
+
+    // Sincronizar actualización directa a Firebase en clave individual para que el seguimiento del cliente cambie en 0ms
+    try {
+      const cleanId = String(orderId).replace(/[^a-zA-Z0-9_-]/g, '_');
+      const updatedOrder = nextOrders.find(o => o.id === orderId) || nextAudit.find(o => o.id === orderId);
+      if (updatedOrder) {
+        fbSet(ref(rtdb, `orders/${cleanId}`), updatedOrder).catch(() => {});
+        fbSet(ref(rtdb, `audit_orders/${cleanId}`), updatedOrder).catch(() => {});
+      }
+    } catch (e) {}
 
     saveOrdersToFirebase(nextOrders, nextAudit);
   }, [orders, auditOrders, saveOrdersToFirebase]);
@@ -645,10 +662,8 @@ export function MenuProvider({ children }) {
     setAuditOrders(nextAudit);
 
     if (typeof window !== 'undefined') {
-      try {
-        localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(nextOrders));
-        localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(nextAudit));
-      } catch (e) {}
+      safeSetLocalStorage(STORAGE_KEY_ORDERS, nextOrders);
+      safeSetLocalStorage(STORAGE_KEY_AUDIT_ORDERS, nextAudit, 500);
 
       if ('BroadcastChannel' in window) {
         try {
@@ -657,8 +672,16 @@ export function MenuProvider({ children }) {
           channel.close();
         } catch (e) {}
       }
-
     }
+
+    // Actualizar también la clave directa en Firebase
+    try {
+      const cleanId = String(orderId).replace(/[^a-zA-Z0-9_-]/g, '_');
+      if (updatedOrder) {
+        fbSet(ref(rtdb, `orders/${cleanId}`), updatedOrder).catch(() => {});
+        fbSet(ref(rtdb, `audit_orders/${cleanId}`), updatedOrder).catch(() => {});
+      }
+    } catch (e) {}
 
     saveOrdersToFirebase(nextOrders, nextAudit);
 
@@ -690,10 +713,8 @@ export function MenuProvider({ children }) {
     setAuditOrders(nextAudit);
 
     if (typeof window !== 'undefined') {
-      try {
-        localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(nextOrders));
-        localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(nextAudit));
-      } catch (e) {}
+      safeSetLocalStorage(STORAGE_KEY_ORDERS, nextOrders);
+      safeSetLocalStorage(STORAGE_KEY_AUDIT_ORDERS, nextAudit, 500);
 
       if ('BroadcastChannel' in window) {
         try {
@@ -704,6 +725,12 @@ export function MenuProvider({ children }) {
         } catch (e) {}
       }
     }
+
+    // Eliminar también de clave directa individual en Firebase
+    try {
+      const cleanId = String(orderId).replace(/[^a-zA-Z0-9_-]/g, '_');
+      fbRemove(ref(rtdb, `orders/${cleanId}`)).catch(() => {});
+    } catch (e) {}
 
     saveOrdersToFirebase(nextOrders, nextAudit);
 
@@ -724,10 +751,8 @@ export function MenuProvider({ children }) {
     setAuditOrders(nextAudit);
 
     if (typeof window !== 'undefined') {
-      try {
-        localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(nextOrders));
-        localStorage.setItem(STORAGE_KEY_AUDIT_ORDERS, JSON.stringify(nextAudit));
-      } catch (e) {}
+      safeSetLocalStorage(STORAGE_KEY_ORDERS, nextOrders);
+      safeSetLocalStorage(STORAGE_KEY_AUDIT_ORDERS, nextAudit, 500);
 
       if ('BroadcastChannel' in window) {
         try {
@@ -738,6 +763,13 @@ export function MenuProvider({ children }) {
         } catch (e) {}
       }
     }
+
+    // Purga física de clave individual en Firebase
+    try {
+      const cleanId = String(orderId).replace(/[^a-zA-Z0-9_-]/g, '_');
+      fbRemove(ref(rtdb, `orders/${cleanId}`)).catch(() => {});
+      fbRemove(ref(rtdb, `audit_orders/${cleanId}`)).catch(() => {});
+    } catch (e) {}
 
     saveOrdersToFirebase(nextOrders, nextAudit);
 

@@ -13,22 +13,25 @@ export const STORAGE_KEY_CUSTOMER_FEEDBACK = 'tronos_customer_feedback';
 
 export default function PedidoTrackingClient() {
   const params = useParams();
-  let orderId = params?.id ? decodeURIComponent(params.id) : '';
-  if ((!orderId || orderId === 'tracking') && typeof window !== 'undefined') {
+  let rawId = params?.id ? decodeURIComponent(params.id) : '';
+  if ((!rawId || rawId === 'tracking') && typeof window !== 'undefined') {
     // Try query parameter first (?id=XXX)
     const urlParams = new URLSearchParams(window.location.search);
     const qId = urlParams.get('id');
     if (qId && qId !== 'tracking') {
-      orderId = decodeURIComponent(qId);
+      rawId = decodeURIComponent(qId);
     } else {
       // Fallback: try to extract from URL path
       const parts = window.location.pathname.split('/');
       const last = parts[parts.length - 1] || parts[parts.length - 2];
       if (last && last !== 'pedido' && last !== 'tracking') {
-        orderId = decodeURIComponent(last);
+        rawId = decodeURIComponent(last);
       }
     }
   }
+
+  const [orderId, setOrderId] = useState(() => (rawId || '').replace(/^#+/, '').trim());
+  const [manualSearch, setManualSearch] = useState('');
 
   const [orders, setOrders] = useState([]);
   const [liveOrder, setLiveOrder] = useState(null);
@@ -103,7 +106,34 @@ export default function PedidoTrackingClient() {
   useEffect(() => {
     fetchOrderData();
 
-    // Listen to Firebase for real-time order updates (replaces polling)
+    const cleanId = String(orderId).replace(/^#+/, '').trim().replace(/[^a-zA-Z0-9_-]/g, '_');
+    let unsubSingleOrder = null;
+    let unsubSingleAudit = null;
+
+    // 1) PRIORIDAD ALTA: Escuchar directamente el pedido individual (30ms, <1KB)
+    if (cleanId) {
+      try {
+        const singleOrderRef = ref(rtdb, `orders/${cleanId}`);
+        unsubSingleOrder = onValue(singleOrderRef, (snapshot) => {
+          const val = snapshot.val();
+          if (val && typeof val === 'object' && val.id) {
+            setLiveOrder(val);
+            setLoading(false);
+          }
+        }, () => {});
+
+        const singleAuditRef = ref(rtdb, `audit_orders/${cleanId}`);
+        unsubSingleAudit = onValue(singleAuditRef, (snapshot) => {
+          const val = snapshot.val();
+          if (val && typeof val === 'object' && val.id) {
+            setLiveOrder(val);
+            setLoading(false);
+          }
+        }, () => {});
+      } catch (e) {}
+    }
+
+    // 2) RESPALDO: Escuchar colección general de Firebase para compatibilidad
     const ordersRef = ref(rtdb, 'orders');
     const auditRef = ref(rtdb, 'audit_orders');
     let firebaseLoaded = 0;
@@ -114,15 +144,13 @@ export default function PedidoTrackingClient() {
       if (items.length > 0) {
         setOrders(prev => {
           const map = new Map();
-          // Add existing orders
           (prev || []).forEach(o => { if (o?.id) map.set(o.id, o); });
-          // Add/update with Firebase data (Firebase has latest state)
           items.forEach(o => { if (o?.id) map.set(o.id, o); });
           const merged = Array.from(map.values());
 
-          // Update liveOrder if we find a match
           if (orderId) {
-            const found = merged.find(o => o.id?.toLowerCase() === orderId.toLowerCase());
+            const cleanTarget = String(orderId).replace(/^#+/, '').toLowerCase().trim();
+            const found = merged.find(o => String(o?.id || '').replace(/^#+/, '').toLowerCase().trim() === cleanTarget);
             if (found) {
               setLiveOrder(found);
             }
@@ -183,6 +211,8 @@ export default function PedidoTrackingClient() {
       if (channel) channel.close();
       if (unsubOrders) unsubOrders();
       if (unsubAudit) unsubAudit();
+      if (unsubSingleOrder) unsubSingleOrder();
+      if (unsubSingleAudit) unsubSingleAudit();
     };
   }, [orderId]);
 
@@ -455,11 +485,58 @@ export default function PedidoTrackingClient() {
                 animationDelay: '0.1s',
               }}
             >
-              <div style={{ fontSize: '48px', marginBottom: '12px' }}>😕</div>
-              <h2 style={{ fontSize: '18px', fontWeight: 800, color: '#0f172a', marginBottom: '8px' }}>Pedido No Encontrado</h2>
-              <p style={{ fontSize: '13px', color: '#64748b', marginBottom: '20px' }}>
-                No encontramos la comanda #{orderId}. Verifica que el enlace sea correcto.
+              <div style={{ fontSize: '48px', marginBottom: '12px' }}>🔎</div>
+              <h2 style={{ fontSize: '18px', fontWeight: 800, color: '#0f172a', marginBottom: '8px' }}>
+                {orderId ? `Comanda #${orderId} no encontrada` : 'Ingresa tu número de comanda'}
+              </h2>
+              <p style={{ fontSize: '13px', color: '#64748b', marginBottom: '20px', maxWidth: '400px', margin: '0 auto 20px' }}>
+                Verifica el código de tu comanda o cópialo directamente del mensaje de WhatsApp que te enviamos.
               </p>
+
+              {/* Formulario de búsqueda directa */}
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const target = manualSearch.replace(/^#+/, '').trim();
+                  if (target) {
+                    setOrderId(target);
+                    setLoading(true);
+                  }
+                }}
+                style={{ display: 'flex', gap: '8px', maxWidth: '380px', margin: '0 auto 24px' }}
+              >
+                <input
+                  type="text"
+                  placeholder="Ej: TRN-123456"
+                  value={manualSearch}
+                  onChange={(e) => setManualSearch(e.target.value)}
+                  style={{
+                    flex: 1,
+                    padding: '10px 14px',
+                    borderRadius: '12px',
+                    border: '1.5px solid #cbd5e1',
+                    fontSize: '14px',
+                    fontWeight: 700,
+                    outline: 'none',
+                  }}
+                />
+                <button
+                  type="submit"
+                  style={{
+                    background: '#eab308',
+                    color: '#000000',
+                    border: 'none',
+                    padding: '10px 18px',
+                    borderRadius: '12px',
+                    fontWeight: 800,
+                    fontSize: '13.5px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Buscar
+                </button>
+              </form>
+
               <Link
                 href="/"
                 style={{
@@ -708,7 +785,7 @@ export default function PedidoTrackingClient() {
                           )}
                         </div>
                         <div style={{ fontSize: '14px', fontWeight: 800, color: '#0f172a', whiteSpace: 'nowrap', marginLeft: '12px' }}>
-                          {formatPrice(item.price * item.quantity)}
+                          {formatPrice((item.price || 0) * (item.quantity || 1))}
                         </div>
                       </div>
                     ))}

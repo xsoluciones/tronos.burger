@@ -45,7 +45,7 @@ export const generateMasterReportHtml = ({
     if (o?.id) ordersMap.set(o.id, o);
   });
   const allOrdersList = Array.from(ordersMap.values()).sort(
-    (a, b) => new Date(b.date || 0) - new Date(a.date || 0)
+    (a, b) => new Date(b.date || b.createdAt || 0) - new Date(a.date || a.createdAt || 0)
   );
 
   // Cálculos Financieros y de Ventas
