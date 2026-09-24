@@ -116,27 +116,6 @@ const defaultRestaurantConfig = {
  */
 const APP_CACHE_VERSION = 'tronos-v4.0.0';
 
-// TTL para cachés locales: 2 horas (en milisegundos)
-// Después de este tiempo, los datos cacheados se descartan y se espera a Firebase
-const CACHE_TTL_MS = 2 * 60 * 60 * 1000;
-
-/** Comprueba si el caché local ha expirado */
-const isCacheExpired = () => {
-  if (typeof window === 'undefined') return true;
-  try {
-    const ts = localStorage.getItem('tronos-cache-ts');
-    if (!ts) return true;
-    return (Date.now() - Number(ts)) > CACHE_TTL_MS;
-  } catch (e) { return true; }
-};
-
-/** Actualiza el timestamp del caché local */
-const touchCacheTimestamp = () => {
-  if (typeof window === 'undefined') return;
-  try { localStorage.setItem('tronos-cache-ts', String(Date.now())); } catch (e) {}
-};
-
-// Preservar la versión de caché de la app (sin borrar el menú cada 2 horas para garantizar que clientes con mala señal siempre vean la carta)
 if (typeof window !== 'undefined') {
   try {
     const currentVersion = localStorage.getItem('tronos-cache-version');
@@ -538,17 +517,7 @@ export function MenuProvider({ children }) {
       console.warn('[Firebase] Error en envío prioritario de orden:', e);
     }
 
-    // 3) BACKGROUND: Sincronizar directo con Google Sheets (garantiza guardado sin depender del servidor)
-    const sheetsUrl = process.env.NEXT_PUBLIC_GOOGLE_SHEETS_WEBHOOK_URL;
-    if (sheetsUrl && typeof window !== 'undefined') {
-      fetch(sheetsUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ order: orderWithMeta }),
-      }).catch((err) => console.warn('[MenuContext] Error enviando a Google Sheets:', err));
-    }
-
-    // Respaldo de listas completas en Firebase
+    // 3) Respaldo de listas completas en Firebase
     saveOrdersToFirebase(nextOrders, nextAudit);
 
     return orderWithMeta;
@@ -866,7 +835,6 @@ export function MenuProvider({ children }) {
           if (Date.now() < recentMenuUpdateRef.current) return;
           setMenuCategories(val);
           try { localStorage.setItem(STORAGE_KEY_MENU, JSON.stringify(val)); } catch (e) {}
-          touchCacheTimestamp();
         }
       }, (err) => console.warn('[Firebase] Error escuchando menú:', err?.message));
 
@@ -881,7 +849,6 @@ export function MenuProvider({ children }) {
             whatsapp: cleanWhatsAppNumber(val.whatsapp || prev.whatsapp),
           }));
           try { localStorage.setItem(STORAGE_KEY_CONFIG, JSON.stringify(val)); } catch (e) {}
-          touchCacheTimestamp();
         }
       }, (err) => console.warn('[Firebase] Error escuchando config:', err?.message));
 
