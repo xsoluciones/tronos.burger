@@ -6,7 +6,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { formatPrice } from '@/app/data/menuData';
 import { rtdb } from '@/app/lib/firebaseClient';
-import { ref, onValue } from 'firebase/database';
+import { ref, onValue, set as fbSet } from 'firebase/database';
 
 // Clave de almacenamiento exclusiva para opiniones de clientes
 export const STORAGE_KEY_CUSTOMER_FEEDBACK = 'tronos_customer_feedback';
@@ -199,18 +199,38 @@ export default function PedidoTrackingClient() {
           setRating(existing.rating || 5);
           setComment(existing.comment || '');
           setImprovements(existing.improvements || '');
+          return;
         }
       }
     } catch (e) {}
+
+    // Verificar en Firebase si ya se calificó esta comanda
+    try {
+      const cleanOrderId = String(orderId).replace(/[^a-zA-Z0-9_-]/g, '_');
+      const feedbackRef = ref(rtdb, `customer_feedback/FBK-${cleanOrderId}`);
+      const unsub = onValue(feedbackRef, (snapshot) => {
+        const existing = snapshot.val();
+        if (existing) {
+          setFeedbackSent(true);
+          setRating(existing.rating || 5);
+          setComment(existing.comment || '');
+          setImprovements(existing.improvements || '');
+        }
+      }, { onlyOnce: true });
+      return () => unsub();
+    } catch (e) {}
   }, [orderId]);
 
-  // ── Enviar Calificación (Llega EXCLUSIVAMENTE al Admin) ────────────
+  // ── Enviar Calificación (Llega EXCLUSIVAMENTE al Admin en Tiempo Real) ────
   const handleSubmitFeedback = (e) => {
     e.preventDefault();
     if (!orderId) return;
 
+    const cleanOrderId = String(orderId).replace(/[^a-zA-Z0-9_-]/g, '_');
+    const feedbackId = `FBK-${cleanOrderId}`;
+
     const newFeedback = {
-      id: `FBK-${Date.now()}`,
+      id: feedbackId,
       orderId: orderId,
       customerName: liveOrder?.customer?.nombre || 'Cliente Tronos',
       customerPhone: liveOrder?.customer?.telefono || '',
@@ -223,12 +243,18 @@ export default function PedidoTrackingClient() {
     };
 
     try {
+      // 1) Guardar en Firebase Realtime Database para sincronización inmediata con el Admin
+      fbSet(ref(rtdb, `customer_feedback/${feedbackId}`), newFeedback).catch((err) => {
+        console.error('Error enviando feedback a Firebase:', err);
+      });
+
+      // 2) Guardar en localStorage local del cliente
       const raw = localStorage.getItem(STORAGE_KEY_CUSTOMER_FEEDBACK);
       const existingList = raw ? JSON.parse(raw) : [];
       const updatedList = [newFeedback, ...existingList.filter((f) => f.orderId !== orderId)];
       localStorage.setItem(STORAGE_KEY_CUSTOMER_FEEDBACK, JSON.stringify(updatedList));
 
-      // Notificar al admin por BroadcastChannel
+      // 3) Notificar por BroadcastChannel si está en la misma ventana/navegador
       if ('BroadcastChannel' in window) {
         const ch = new BroadcastChannel('tronos_orders_channel');
         ch.postMessage({ type: 'NEW_CUSTOMER_FEEDBACK', feedback: newFeedback });

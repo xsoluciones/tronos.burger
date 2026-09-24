@@ -6,6 +6,8 @@ import Image from 'next/image';
 import { useMenu, cleanWhatsAppNumber } from '@/app/context/MenuContext';
 import { formatPrice } from '@/app/data/menuData';
 import { playLoudBell, unlockAudio } from '@/app/lib/bellSound';
+import { rtdb } from '@/app/lib/firebaseClient';
+import { ref, onValue, remove as fbRemove } from 'firebase/database';
 import {
   generateMasterReportHtml,
   printMasterReport,
@@ -55,6 +57,14 @@ const isOrderFromToday = (order) => {
   } catch (e) {
     return false;
   }
+};
+
+// Helper: normalizar datos de Firebase (array u objeto con claves) a array limpio
+const firebaseValToArray = (val) => {
+  if (!val) return [];
+  if (Array.isArray(val)) return val.filter(Boolean);
+  if (typeof val === 'object') return Object.values(val).filter(Boolean);
+  return [];
 };
 
 export default function AdminPOSPage() {
@@ -546,6 +556,34 @@ export default function AdminPOSPage() {
   useEffect(() => {
     loadFeedbacks();
 
+    // 1. Escuchar opiniones y calificaciones en vivo desde Firebase RTDB
+    let unsubFirebase = null;
+    try {
+      const fbRef = ref(rtdb, 'customer_feedback');
+      unsubFirebase = onValue(fbRef, (snapshot) => {
+        const val = snapshot.val();
+        if (val) {
+          const list = firebaseValToArray(val).sort(
+            (a, b) => new Date(b.createdAt || b.timestamp || 0) - new Date(a.createdAt || a.timestamp || 0)
+          );
+          setCustomerFeedbacks((prev) => {
+            // Notificar sonoramente y con toast si entra una nueva opinión
+            if (prev && prev.length > 0 && list.length > prev.length) {
+              const newest = list[0];
+              showToast(`⭐ ¡Nueva calificación recibida de ${newest?.customerName || 'un cliente'}! (${newest?.rating || 5}★)`, 'info');
+              try { playLoudBell(); } catch (e) {}
+            }
+            return list;
+          });
+          try {
+            localStorage.setItem('tronos_customer_feedback', JSON.stringify(list));
+          } catch (e) {}
+        }
+      }, (err) => console.warn('[Firebase] Error escuchando customer_feedback:', err));
+    } catch (e) {
+      console.warn('Error iniciando listener de feedbacks:', e);
+    }
+
     const handleStorage = (e) => {
       if (e.key === 'tronos_customer_feedback') {
         loadFeedbacks();
@@ -569,6 +607,7 @@ export default function AdminPOSPage() {
     return () => {
       window.removeEventListener('storage', handleStorage);
       if (channel) channel.close();
+      if (unsubFirebase) unsubFirebase();
     };
   }, [loadFeedbacks]);
 
@@ -578,6 +617,10 @@ export default function AdminPOSPage() {
       const updated = customerFeedbacks.filter((f) => f.id !== feedbackId);
       setCustomerFeedbacks(updated);
       localStorage.setItem('tronos_customer_feedback', JSON.stringify(updated));
+      // Eliminar también de Firebase RTDB
+      try {
+        fbRemove(ref(rtdb, `customer_feedback/${feedbackId}`)).catch(() => {});
+      } catch (e) {}
       showToast('Opinión eliminada', 'info');
     } catch (e) {}
   };

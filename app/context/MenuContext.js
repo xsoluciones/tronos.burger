@@ -779,6 +779,7 @@ export function MenuProvider({ children }) {
     let unsubAudit = null;
     let unsubMenu = null;
     let unsubConfig = null;
+    let unsubFeedback = null;
 
     try {
       const ordersRef = ref(rtdb, 'orders');
@@ -835,6 +836,18 @@ export function MenuProvider({ children }) {
           touchCacheTimestamp();
         }
       }, (err) => console.warn('[Firebase] Error escuchando config:', err?.message));
+
+      // Sincronizar Calificaciones / Opiniones de Clientes desde Firebase
+      const feedbackRef = ref(rtdb, 'customer_feedback');
+      unsubFeedback = onValue(feedbackRef, (snapshot) => {
+        const val = snapshot.val();
+        if (val) {
+          const list = firebaseValToArray(val).sort(
+            (a, b) => new Date(b.createdAt || b.timestamp || 0) - new Date(a.createdAt || a.timestamp || 0)
+          );
+          try { localStorage.setItem('tronos_customer_feedback', JSON.stringify(list)); } catch (e) {}
+        }
+      }, (err) => console.warn('[Firebase] Error escuchando feedbacks:', err?.message));
     } catch (err) {
       console.warn('[Firebase] Init error:', err);
     }
@@ -844,6 +857,7 @@ export function MenuProvider({ children }) {
       if (unsubAudit) unsubAudit();
       if (unsubMenu) unsubMenu();
       if (unsubConfig) unsubConfig();
+      if (unsubFeedback) unsubFeedback();
     };
   }, [smartMergeOrders]);
 
